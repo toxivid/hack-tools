@@ -1,0 +1,327 @@
+(() => {
+  if (window.__cheatGUI_loaded) return;
+  window.__cheatGUI_loaded = true;
+
+  const watchItems = new Map();
+
+  const style = document.createElement("style");
+  style.textContent = `
+    #cheat_gui {
+      width: 600px;
+      height: 400px;
+      background: #111;
+      color: white;
+      font-family: monospace;
+      position: fixed;
+      top: 100px;
+      left: 100px;
+      z-index: 999999;
+      border: 2px solid #444;
+      display: flex;
+      flex-direction: column;
+      resize: both;
+      overflow: hidden;
+    }
+    #cheat_header {
+      background: #222;
+      padding: 6px;
+      cursor: move;
+      user-select: none;
+      font-weight: bold;
+    }
+    #cheat_tabs {
+      display: flex;
+      background: #222;
+      border-bottom: 1px solid #444;
+      flex-wrap: wrap;
+    }
+    .cheat_tab {
+      padding: 5px 10px;
+      cursor: pointer;
+    }
+    .cheat_tab.active {
+      background: #333;
+    }
+    .cheat_panel {
+      flex: 1;
+      overflow: auto;
+      padding: 10px;
+      display: none;
+    }
+    .cheat_panel.active {
+      display: block;
+    }
+    #cheat_logs {
+      white-space: pre-wrap;
+      font-size: 12px;
+      max-height: 100%;
+    }
+    input.cheat_input, select.cheat_select {
+      padding: 4px;
+      background: #222;
+      color: white;
+      border: 1px solid #555;
+      margin-right: 5px;
+    }
+    button.cheat_btn {
+      background: #333;
+      color: white;
+      border: 1px solid #444;
+      padding: 4px 10px;
+      cursor: pointer;
+      margin-right: 5px;
+    }
+    .watch-list {
+      font-size: 12px;
+    }
+    .watch-item {
+      margin-bottom: 4px;
+    }
+    .spy_toggle {
+      margin-right: 10px;
+    }
+    #spy_output {
+      white-space: pre-wrap;
+      font-size: 12px;
+      max-height: 250px;
+      overflow-y: auto;
+      background: #222;
+      padding: 5px;
+      margin-top: 10px;
+    }
+    #console_input {
+      width: 100%;
+      padding: 5px;
+      background: #222;
+      border: 1px solid #444;
+      color: white;
+      font-family: monospace;
+    }
+    #console_output {
+      white-space: pre-wrap;
+      font-size: 12px;
+      background: #222;
+      padding: 5px;
+      height: 200px;
+      overflow-y: auto;
+      margin-top: 10px;
+    }
+  `;
+  document.head.appendChild(style);
+
+  const gui = document.createElement("div");
+  gui.id = "cheat_gui";
+  gui.innerHTML = `
+    <div id="cheat_header">🔥 Cheat GUI</div>
+    <div id="cheat_tabs">
+      <div class="cheat_tab active" data-tab="main">Scan</div>
+      <div class="cheat_tab" data-tab="logs">Logs</div>
+      <div class="cheat_tab" data-tab="watch">Watch</div>
+      <div class="cheat_tab" data-tab="explorer">Explorer</div>
+      <div class="cheat_tab" data-tab="hooks">Hooks</div>
+      <div class="cheat_tab" data-tab="spy">Spy</div>
+      <div class="cheat_tab" data-tab="console">Console</div>
+    </div>
+    <div class="cheat_panel active" id="tab_main">
+      <div>
+        Value: <input type="text" id="value_input" class="cheat_input" />
+        <button id="first_scan" class="cheat_btn">First Scan</button>
+        <button id="next_scan" class="cheat_btn">Next Scan</button>
+        <label><input type="checkbox" id="deep_mode" /> Deep</label>
+      </div>
+      <p>🔍 First Scan: search all values<br>Next Scan: filter previous results</p>
+    </div>
+    <div class="cheat_panel" id="tab_logs">
+      <div id="cheat_logs"></div>
+    </div>
+    <div class="cheat_panel" id="tab_watch">
+      <div class="watch-list" id="watch_list"></div>
+      <div>
+        Path: <input type="text" id="watch_input" class="cheat_input" />
+        <button id="watch_add" class="cheat_btn">Add Watch</button>
+      </div>
+    </div>
+    <div class="cheat_panel" id="tab_explorer">
+      <div>
+        Object name: <input type="text" id="explore_input" class="cheat_input" />
+        <button id="explore_btn" class="cheat_btn">Explore</button>
+      </div>
+      <pre id="explore_output"></pre>
+    </div>
+    <div class="cheat_panel" id="tab_hooks">
+      <div>
+        Function path: <input type="text" id="hook_input" class="cheat_input" />
+        <button id="hook_btn" class="cheat_btn">Hook</button>
+      </div>
+      <pre id="hook_output"></pre>
+    </div>
+    <div class="cheat_panel" id="tab_spy">
+      <label class="spy_toggle"><input type="checkbox" id="spy_clicks"> Clicks</label>
+      <label class="spy_toggle"><input type="checkbox" id="spy_onclick"> onClick</label>
+      <label class="spy_toggle"><input type="checkbox" id="spy_path"> Path</label>
+      <label class="spy_toggle"><input type="checkbox" id="spy_text"> Text</label>
+      <label class="spy_toggle"><input type="checkbox" id="spy_type"> Type</label>
+      <div id="spy_output"></div>
+    </div>
+    <div class="cheat_panel" id="tab_console">
+      <input type="text" id="console_input" placeholder="Enter JS code and press Enter..." />
+      <div id="console_output"></div>
+    </div>
+  `;
+  document.body.appendChild(gui);
+
+  const tabs = document.querySelectorAll(".cheat_tab");
+  const panels = document.querySelectorAll(".cheat_panel");
+
+  tabs.forEach(tab => {
+    tab.addEventListener("click", () => {
+      tabs.forEach(t => t.classList.remove("active"));
+      panels.forEach(p => p.classList.remove("active"));
+      tab.classList.add("active");
+      document.getElementById("tab_" + tab.dataset.tab).classList.add("active");
+    });
+  });
+
+  const header = document.getElementById("cheat_header");
+  header.addEventListener("mousedown", e => {
+    const offsetX = e.clientX - gui.offsetLeft;
+    const offsetY = e.clientY - gui.offsetTop;
+    const move = e => {
+      gui.style.left = e.clientX - offsetX + "px";
+      gui.style.top = e.clientY - offsetY + "px";
+    };
+    const stop = () => {
+      document.removeEventListener("mousemove", move);
+      document.removeEventListener("mouseup", stop);
+    };
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", stop);
+  });
+
+  function log(msg) {
+    document.getElementById("cheat_logs").textContent += msg + "\n";
+  }
+
+  // Watch tab
+  document.getElementById("watch_add").onclick = () => {
+    const path = document.getElementById("watch_input").value;
+    if (!path) return;
+    try {
+      const val = eval(path);
+      watchItems.set(path, val);
+      updateWatchList();
+    } catch (e) {
+      log("Invalid path: " + path);
+    }
+  };
+
+  function updateWatchList() {
+    let out = "";
+    for (const [key] of watchItems) {
+      try {
+        const val = eval(key);
+        out += `<div class="watch-item">${key}: ${val}</div>`;
+      } catch {
+        out += `<div class="watch-item">${key}: [error]</div>`;
+      }
+    }
+    document.getElementById("watch_list").innerHTML = out;
+  }
+  setInterval(updateWatchList, 1000);
+
+  // Explorer
+  document.getElementById("explore_btn").onclick = () => {
+    const input = document.getElementById("explore_input").value;
+    const output = document.getElementById("explore_output");
+    try {
+      const obj = eval(input);
+      const keys = Object.getOwnPropertyNames(obj);
+      output.textContent = keys.map(k => {
+        try {
+          const v = obj[k];
+          return `${k}: ${typeof v === "function" ? "[Function]" : JSON.stringify(v)}`;
+        } catch {
+          return `${k}: [error]`;
+        }
+      }).join("\n");
+    } catch (e) {
+      output.textContent = "Invalid input";
+    }
+  };
+
+  // Hooks
+  document.getElementById("hook_btn").onclick = () => {
+    const fnPath = document.getElementById("hook_input").value;
+    const hookOutput = document.getElementById("hook_output");
+    if (!fnPath) return;
+    try {
+      const parts = fnPath.split('.');
+      const fnName = parts.pop();
+      const parent = parts.reduce((a, b) => a[b], window);
+      const orig = parent[fnName];
+      parent[fnName] = function(...args) {
+        log("Hooked: " + fnPath + "(" + args.map(a => JSON.stringify(a)).join(", ") + ")");
+        return orig.apply(this, args);
+      };
+      hookOutput.textContent = "Hooked: " + fnPath;
+    } catch (e) {
+      hookOutput.textContent = "Error hooking " + fnPath;
+    }
+  };
+
+  // Spy
+  const spyOutput = document.getElementById("spy_output");
+  document.getElementById("spy_clicks").addEventListener("change", function () {
+    if (this.checked) {
+      document.addEventListener("click", spyHandler, true);
+    } else {
+      document.removeEventListener("click", spyHandler, true);
+    }
+  });
+
+  function spyHandler(e) {
+    const el = e.target;
+    let out = "";
+    if (document.getElementById("spy_clicks").checked) out += `Click: ${el.tagName}`;
+    if (document.getElementById("spy_onclick").checked) out += ` onclick=${el.onclick}`;
+    if (document.getElementById("spy_path").checked) out += ` path=${getDomPath(el)}`;
+    if (document.getElementById("spy_text").checked) out += ` text="${el.textContent?.trim()}"`;
+    if (document.getElementById("spy_type").checked) out += ` type=${el.type}`;
+    spyOutput.innerHTML += out + "\n";
+  }
+
+  function getDomPath(el) {
+    const stack = [];
+    while (el.parentNode) {
+      let sibCount = 0, sibIndex = 0;
+      for (let i = 0; i < el.parentNode.childNodes.length; i++) {
+        const sib = el.parentNode.childNodes[i];
+        if (sib.nodeName === el.nodeName) {
+          if (sib === el) sibIndex = sibCount;
+          sibCount++;
+        }
+      }
+      stack.unshift(`${el.nodeName.toLowerCase()}:nth-of-type(${sibIndex + 1})`);
+      el = el.parentNode;
+    }
+    return stack.join(" > ");
+  }
+
+  // Console
+  const consoleInput = document.getElementById("console_input");
+  const consoleOutput = document.getElementById("console_output");
+
+  consoleInput.addEventListener("keydown", e => {
+    if (e.key === "Enter") {
+      const cmd = consoleInput.value;
+      consoleInput.value = "";
+      try {
+        const result = eval(cmd);
+        consoleOutput.textContent += "> " + cmd + "\n" + JSON.stringify(result) + "\n";
+      } catch (err) {
+        consoleOutput.textContent += "> " + cmd + "\n" + err + "\n";
+      }
+      consoleOutput.scrollTop = consoleOutput.scrollHeight;
+    }
+  });
+})();
