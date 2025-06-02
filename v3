@@ -1,0 +1,516 @@
+(() => {
+  if (window.__cheatGUI_loaded) return;
+  window.__cheatGUI_loaded = true;
+
+  const watchItems = new Map();
+  const minimizedBtn = document.createElement("div");
+
+  const style = document.createElement("style");
+  style.textContent = `
+    #cheat_gui {
+      width: 600px;
+      height: 400px;
+      background: #111;
+      color: white;
+      font-family: monospace;
+      position: fixed;
+      top: 100px;
+      left: 100px;
+      z-index: 999999;
+      border: 2px solid #444;
+      display: flex;
+      flex-direction: column;
+      resize: both;
+      overflow: hidden;
+    }
+    #cheat_header {
+      background: #222;
+      padding: 6px;
+      cursor: move;
+      user-select: none;
+      font-weight: bold;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    #cheat_controls {
+      display: flex;
+      gap: 5px;
+    }
+    .cheat_ctrl_btn {
+      background: #333;
+      border: 1px solid #444;
+      color: white;
+      width: 20px;
+      height: 20px;
+      line-height: 18px;
+      text-align: center;
+      cursor: pointer;
+    }
+    #cheat_tabs {
+      display: flex;
+      background: #222;
+      border-bottom: 1px solid #444;
+      flex-wrap: wrap;
+    }
+    .cheat_tab {
+      padding: 5px 10px;
+      cursor: pointer;
+    }
+    .cheat_tab.active {
+      background: #333;
+    }
+    .cheat_panel {
+      flex: 1;
+      overflow: auto;
+      padding: 10px;
+      display: none;
+    }
+    .cheat_panel.active {
+      display: block;
+    }
+    #cheat_logs {
+      white-space: pre-wrap;
+      font-size: 12px;
+      max-height: 100%;
+    }
+    #cheat_logs .log-line:hover {
+      background: #444;
+      cursor: pointer;
+    }
+    #cheat_logs .log-line.selected {
+      background: #666;
+    }
+    input.cheat_input, select.cheat_select {
+      padding: 4px;
+      background: #222;
+      color: white;
+      border: 1px solid #555;
+      margin-right: 5px;
+    }
+    button.cheat_btn {
+      background: #333;
+      color: white;
+      border: 1px solid #444;
+      padding: 4px 10px;
+      cursor: pointer;
+      margin-right: 5px;
+    }
+    .watch-list {
+      font-size: 12px;
+    }
+    .watch-item {
+      margin-bottom: 4px;
+    }
+    .spy_toggle {
+      margin-right: 10px;
+    }
+    #spy_output {
+      white-space: pre-wrap;
+      font-size: 12px;
+      max-height: 250px;
+      overflow-y: auto;
+      background: #222;
+      padding: 5px;
+      margin-top: 10px;
+    }
+    #console_input {
+      width: 100%;
+      padding: 5px;
+      background: #222;
+      border: 1px solid #444;
+      color: white;
+      font-family: monospace;
+    }
+    #minimized_btn {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      background: #111;
+      color: white;
+      border: 2px solid #444;
+      padding: 5px;
+      font-family: monospace;
+      font-size: 12px;
+      cursor: pointer;
+      z-index: 999999;
+      display: none;
+    }
+  `;
+  document.head.appendChild(style);
+
+  minimizedBtn.id = "minimized_btn";
+  minimizedBtn.textContent = "[ + ]";
+  document.body.appendChild(minimizedBtn);
+
+  const gui = document.createElement("div");
+  gui.id = "cheat_gui";
+  gui.innerHTML = `
+    <div id="cheat_header">
+      <span>🔥 Cheat GUI</span>
+      <div id="cheat_controls">
+        <div class="cheat_ctrl_btn" id="cheat_minimize">-</div>
+        <div class="cheat_ctrl_btn" id="cheat_close">x</div>
+      </div>
+    </div>
+    <div id="cheat_tabs">
+      <div class="cheat_tab active" data-tab="main">Scan</div>
+      <div class="cheat_tab" data-tab="logs">Logs</div>
+      <div class="cheat_tab" data-tab="watch">Watch</div>
+      <div class="cheat_tab" data-tab="explorer">Explorer</div>
+      <div class="cheat_tab" data-tab="hooks">Hooks</div>
+      <div class="cheat_tab" data-tab="spy">Spy</div>
+      <div class="cheat_tab" data-tab="console">Console</div>
+    </div>
+    <div class="cheat_panel active" id="tab_main">
+      <div>
+        Value: <input type="text" id="value_input" class="cheat_input" />
+        <button id="first_scan" class="cheat_btn">First Scan</button>
+        <button id="next_scan" class="cheat_btn">Next Scan</button>
+        <label><input type="checkbox" id="deep_mode" /> Deep</label>
+      </div>
+      <p>🔍 First Scan: search all values<br>Next Scan: filter previous results</p>
+    </div>
+    <div class="cheat_panel" id="tab_logs">
+      <div id="cheat_logs" tabindex="0"></div>
+    </div>
+    <div class="cheat_panel" id="tab_watch">
+      <div class="watch-list" id="watch_list"></div>
+      <div>
+        Path: <input type="text" id="watch_input" class="cheat_input" />
+        <button id="watch_add" class="cheat_btn">Add Watch</button>
+      </div>
+    </div>
+    <div class="cheat_panel" id="tab_explorer">
+      <div>
+        Object name: <input type="text" id="explore_input" class="cheat_input" />
+        <button id="explore_btn" class="cheat_btn">Explore</button>
+      </div>
+      <pre id="explore_output"></pre>
+    </div>
+    <div class="cheat_panel" id="tab_hooks">
+      <button id="detect_hooks" class="cheat_btn">Detect Native Hook Replacements</button>
+      <pre id="hooks_output"></pre>
+    </div>
+    <div class="cheat_panel" id="tab_spy">
+      <label class="spy_toggle"><input type="checkbox" id="spy_clicks"> Clicks</label>
+      <label class="spy_toggle"><input type="checkbox" id="spy_onclick"> onClick</label>
+      <label class="spy_toggle"><input type="checkbox" id="spy_path"> Path</label>
+      <label class="spy_toggle"><input type="checkbox" id="spy_text"> Text</label>
+      <label class="spy_toggle"><input type="checkbox" id="spy_type"> Type</label>
+      <div id="spy_output"></div>
+    </div>
+    <div class="cheat_panel" id="tab_console">
+      <input type="text" id="console_input" placeholder="Enter JS code and press Enter..." />
+    </div>
+  `;
+  document.body.appendChild(gui);
+
+  // Tab switching
+  const tabs = gui.querySelectorAll(".cheat_tab");
+  const panels = gui.querySelectorAll(".cheat_panel");
+  tabs.forEach(tab => {
+    tab.addEventListener("click", () => {
+      tabs.forEach(t => t.classList.remove("active"));
+      panels.forEach(p => p.classList.remove("active"));
+      tab.classList.add("active");
+      document.getElementById("tab_" + tab.dataset.tab).classList.add("active");
+    });
+  });
+
+  // Drag GUI
+  const header = document.getElementById("cheat_header");
+  header.addEventListener("mousedown", e => {
+    const offsetX = e.clientX - gui.offsetLeft;
+    const offsetY = e.clientY - gui.offsetTop;
+    const move = e => {
+      gui.style.left = e.clientX - offsetX + "px";
+      gui.style.top = e.clientY - offsetY + "px";
+    };
+    const stop = () => {
+      document.removeEventListener("mousemove", move);
+      document.removeEventListener("mouseup", stop);
+    };
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", stop);
+  });
+
+  // Close and minimize
+  document.getElementById("cheat_close").onclick = () => gui.remove();
+  document.getElementById("cheat_minimize").onclick = () => {
+    gui.style.display = "none";
+    minimizedBtn.style.display = "block";
+  };
+  minimizedBtn.onclick = () => {
+    gui.style.display = "flex";
+    minimizedBtn.style.display = "none";
+  };
+
+  // Logs - selection, deletion, double-click
+  const logBox = document.getElementById("cheat_logs");
+  let selectedLog = null;
+
+  function log(msg) {
+    const line = document.createElement("div");
+    line.className = "log-line";
+    line.textContent = msg;
+    line.tabIndex = 0;
+
+    line.addEventListener("click", () => {
+      if (selectedLog) selectedLog.classList.remove("selected");
+      selectedLog = line;
+      line.classList.add("selected");
+    });
+
+    line.addEventListener("dblclick", () => {
+      const input = document.getElementById("console_input");
+      input.value = line.textContent;
+      const consoleTab = document.querySelector('[data-tab="console"]');
+      consoleTab.click();
+      input.focus();
+    });
+
+    logBox.appendChild(line);
+    logBox.scrollTop = logBox.scrollHeight;
+  }
+
+  logBox.addEventListener("keydown", e => {
+    if (e.key === "Backspace" && selectedLog) {
+      selectedLog.remove();
+      selectedLog = null;
+    }
+  });
+  // --- Scan logic (simplified example) ---
+  let scanResults = [];
+  const deepModeCheckbox = document.getElementById("deep_mode");
+  const valueInput = document.getElementById("value_input");
+
+  document.getElementById("first_scan").onclick = () => {
+    scanResults = [];
+    const val = valueInput.value.trim();
+    if (!val) {
+      log("Please enter a value to scan.");
+      return;
+    }
+    log(`Starting first scan for: ${val}`);
+    // Example: scan window properties for matching values (simplified)
+    for (const key in window) {
+      try {
+        if (window[key] == val) {
+          scanResults.push(key);
+          log(`Found: window.${key}`);
+        } else if (deepModeCheckbox.checked && typeof window[key] === "object") {
+          for (const subkey in window[key]) {
+            if (window[key][subkey] == val) {
+              scanResults.push(`${key}.${subkey}`);
+              log(`Found: window.${key}.${subkey}`);
+            }
+          }
+        }
+      } catch {
+        // ignore errors
+      }
+    }
+    log(`First scan done. Results count: ${scanResults.length}`);
+  };
+
+  document.getElementById("next_scan").onclick = () => {
+    if (scanResults.length === 0) {
+      log("No previous scan results to filter.");
+      return;
+    }
+    const val = valueInput.value.trim();
+    if (!val) {
+      log("Please enter a value to scan.");
+      return;
+    }
+    log(`Filtering ${scanResults.length} results for: ${val}`);
+    const newResults = [];
+    for (const path of scanResults) {
+      try {
+        let ref = window;
+        const parts = path.split(".");
+        for (const p of parts) {
+          ref = ref[p];
+          if (ref === undefined) break;
+        }
+        if (ref == val) {
+          newResults.push(path);
+          log(`Match: ${path}`);
+        }
+      } catch {
+        // ignore errors
+      }
+    }
+    scanResults = newResults;
+    log(`Next scan done. Results count: ${scanResults.length}`);
+  };
+
+  // --- Watch list ---
+
+  const watchListDiv = document.getElementById("watch_list");
+  const watchInput = document.getElementById("watch_input");
+  const watchAddBtn = document.getElementById("watch_add");
+
+  function updateWatchList() {
+    watchListDiv.innerHTML = "";
+    for (const [path, intervalId] of watchItems.entries()) {
+      const div = document.createElement("div");
+      div.className = "watch-item";
+      div.textContent = `${path} = ${safeGetPathValue(path)}`;
+      watchListDiv.appendChild(div);
+    }
+  }
+
+  function safeGetPathValue(path) {
+    try {
+      const parts = path.split(".");
+      let ref = window;
+      for (const p of parts) {
+        ref = ref[p];
+        if (ref === undefined) return "undefined";
+      }
+      if (typeof ref === "object") return JSON.stringify(ref);
+      return ref;
+    } catch {
+      return "error";
+    }
+  }
+
+  watchAddBtn.onclick = () => {
+    const path = watchInput.value.trim();
+    if (!path) {
+      log("Watch path cannot be empty.");
+      return;
+    }
+    if (watchItems.has(path)) {
+      log(`Already watching ${path}`);
+      return;
+    }
+    watchItems.set(path, setInterval(() => {
+      updateWatchList();
+    }, 1000));
+    updateWatchList();
+    log(`Added watch on ${path}`);
+  };
+
+  // --- Explorer ---
+
+  const exploreInput = document.getElementById("explore_input");
+  const exploreBtn = document.getElementById("explore_btn");
+  const exploreOutput = document.getElementById("explore_output");
+
+  exploreBtn.onclick = () => {
+    const name = exploreInput.value.trim();
+    if (!name) {
+      log("Enter an object name to explore.");
+      return;
+    }
+    try {
+      const obj = eval(name);
+      let output = "";
+      for (const key in obj) {
+        try {
+          output += `${key}: ${typeof obj[key]}\n`;
+        } catch {
+          output += `${key}: [unaccessible]\n`;
+        }
+      }
+      exploreOutput.textContent = output;
+      log(`Explored object ${name}`);
+    } catch (e) {
+      exploreOutput.textContent = "Error: " + e.message;
+      log("Error exploring object: " + e.message);
+    }
+  };
+
+  // --- Hooks ---
+
+  const detectHooksBtn = document.getElementById("detect_hooks");
+  const hooksOutput = document.getElementById("hooks_output");
+
+  detectHooksBtn.onclick = () => {
+    hooksOutput.textContent = "Detecting hooks...\n";
+    const nativeFuncs = [];
+    const suspicious = [];
+
+    // Example: detect native function replacements for some known functions
+    const funcsToCheck = ["alert", "fetch", "XMLHttpRequest"];
+    funcsToCheck.forEach(name => {
+      try {
+        const origToString = Function.prototype.toString.call(window[name]);
+        if (!origToString.includes("[native code]")) {
+          suspicious.push(name);
+          hooksOutput.textContent += `Suspicious hook detected on ${name}\n`;
+        } else {
+          hooksOutput.textContent += `${name} appears native\n`;
+        }
+      } catch {
+        hooksOutput.textContent += `${name} not found\n`;
+      }
+    });
+
+    if (suspicious.length === 0) {
+      hooksOutput.textContent += "No hooks detected.";
+    }
+  };
+
+  // --- Spy ---
+
+  const spyOutput = document.getElementById("spy_output");
+  const spyClicks = document.getElementById("spy_clicks");
+  const spyOnclick = document.getElementById("spy_onclick");
+  const spyPath = document.getElementById("spy_path");
+  const spyText = document.getElementById("spy_text");
+  const spyType = document.getElementById("spy_type");
+
+  function spyLog(msg) {
+    const line = document.createElement("div");
+    line.textContent = msg;
+    spyOutput.appendChild(line);
+    spyOutput.scrollTop = spyOutput.scrollHeight;
+  }
+
+  function getElementPath(el) {
+    if (!el) return "";
+    const parts = [];
+    while (el && el.nodeType === 1) {
+      let part = el.tagName.toLowerCase();
+      if (el.id) part += `#${el.id}`;
+      else if (el.className) part += `.${el.className.split(" ").join(".")}`;
+      parts.unshift(part);
+      el = el.parentElement;
+    }
+    return parts.join(" > ");
+  }
+
+  function onClickSpy(e) {
+    if (!spyClicks.checked && !spyOnclick.checked) return;
+
+    let msg = "Clicked: ";
+    if (spyPath.checked) msg += getElementPath(e.target) + " ";
+    if (spyText.checked) msg += `"${e.target.textContent.trim()}" `;
+    if (spyType.checked) msg += `Type:${e.target.tagName.toLowerCase()} `;
+
+    spyLog(msg);
+  }
+
+  document.addEventListener("click", onClickSpy, true);
+
+  // --- Console ---
+
+  const consoleInput = document.getElementById("console_input");
+  consoleInput.addEventListener("keydown", e => {
+    if (e.key === "Enter") {
+      const code = consoleInput.value.trim();
+      if (!code) return;
+      try {
+        const result = eval(code);
+        log("Console result: " + result);
+      } catch (err) {
+        log("Console error: " + err.message);
+      }
+      consoleInput.value = "";
+    }
+  });
+})();
