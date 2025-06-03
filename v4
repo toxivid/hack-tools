@@ -1,4 +1,45 @@
 (() => {
+// MemoryScanner klasse (alternatief voor MultiThreadedScanner)
+class MemoryScanner {
+  constructor(logger) {
+    this.logger = logger;
+    this.results = new Map();
+  }
+
+  async scan(valueType, targetValue, scanType, root) {
+    this.logger.log(`Scan gestart: type=${valueType}, waarde=${targetValue}, scanType=${scanType}`);
+    this.walkObject(root, valueType, targetValue, scanType, '');
+    this.logger.log(`Scan voltooid! Aantal resultaten: ${this.results.size}`);
+  }
+
+  walkObject(obj, valueType, targetValue, scanType, path) {
+    if (!obj || (typeof obj !== 'object' && typeof obj !== 'function')) return;
+
+    for (let key in obj) {
+      if (!Object.prototype.hasOwnProperty.call(obj, key)) continue;
+      const currentPath = path ? `${path}.${key}` : key;
+      let val = obj[key];
+      if (val === undefined) continue;
+
+      if (this.compareVals(scanType, targetValue, val)) {
+        this.results.set(currentPath, val);
+      }
+
+      if (typeof val === 'object' && val !== null) {
+        this.walkObject(val, valueType, targetValue, scanType, currentPath);
+      }
+    }
+  }
+
+  compareVals(scanType, targetValue, val) {
+    if (scanType === 'exact') {
+      return val === targetValue;
+    }
+    // Andere scanlogica (bijvoorbeeld grotere of kleinere waarden)
+    return false;
+  }
+}
+
   "use strict";
 
   /**
