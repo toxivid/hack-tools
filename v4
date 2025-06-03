@@ -1,0 +1,1239 @@
+(() => {
+  "use strict";
+
+  /**
+   * UniversalCheatEngine (UCE)
+   * Een universele cheat engine voor browser games in de console.
+   * Kan zoeken in memory-achtige objecten, arrays, window scope, met meerdere scan types.
+   * Ondersteunt freeze, logging en multi-scan filtering.
+   * 
+   * Opmerking: Omdat JS geen directe memory toegang heeft,
+   * wordt gezocht in objecten, arrays en primitive waarden binnen window.
+   */
+
+  // Helper: check of een value primitief is (int, float, string)
+  function isPrimitive(val) {
+    return (val === null) || (typeof val !== 'object' && typeof val !== 'function');
+  }
+
+  // Helper: deep clone (voor snapshots)
+  function deepClone(obj) {
+    try {
+      return JSON.parse(JSON.stringify(obj));
+    } catch {
+      return obj;
+    }
+  }
+
+  // Helper: Sleep functie (async delay)
+  function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  // Helper: Hex converter
+  function toHex(val) {
+    if (typeof val === 'number') {
+      return '0x' + val.toString(16);
+    }
+    if (typeof val === 'string') {
+      return Array.from(val).map(c => c.charCodeAt(0).toString(16).padStart(2,'0')).join(' ');
+    }
+    return String(val);
+  }
+
+  // Helper: compare floats with tolerance
+  function floatEquals(a, b, tolerance = 0.0001) {
+    return Math.abs(a - b) < tolerance;
+  }
+
+  // Log systeem
+  class Logger {
+    constructor() {
+      this.logs = [];
+      this.maxLogs = 1000;
+    }
+    log(msg) {
+      let timestamp = new Date().toISOString();
+      let line = `[${timestamp}] ${msg}`;
+      this.logs.push(line);
+      if (this.logs.length > this.maxLogs) {
+        this.logs.shift();
+      }
+      console.log(line);
+    }
+    getAll() {
+      return this.logs.slice();
+    }
+    clear() {
+      this.logs.length = 0;
+      console.clear();
+      this.log('Logs gewist');
+    }
+  }
+
+  // Freeze manager
+  class FreezeManager {
+    constructor(logger) {
+      this.frozenEntries = new Map(); // key: address path string, value: frozen value
+      this.interval = null;
+      this.logger = logger;
+      this.freezeDelay = 100; // ms
+    }
+
+    freeze(addressPath, getValueFunc, setValueFunc) {
+      if (this.frozenEntries.has(addressPath)) {
+        this.logger.log(`Adres ${addressPath} is al gefrozen.`);
+        return false;
+      }
+      const val = getValueFunc();
+      this.frozenEntries.set(addressPath, {val, getValueFunc, setValueFunc});
+      this.logger.log(`Bevries adres ${addressPath} met waarde: ${val}`);
+      if (!this.interval) {
+        this.start();
+      }
+      return true;
+    }
+
+    unfreeze(addressPath) {
+      if (this.frozenEntries.delete(addressPath)) {
+        this.logger.log(`Stop bevriezen van ${addressPath}`);
+      }
+      if (this.frozenEntries.size === 0 && this.interval) {
+        this.stop();
+      }
+    }
+
+    start() {
+      if (this.interval) return;
+      this.interval = setInterval(() => {
+        this.frozenEntries.forEach(({val, setValueFunc}, path) => {
+          try {
+            setValueFunc(val);
+          } catch(e) {
+            this.logger.log(`Fout tijdens freeze op ${path}: ${e.message}`);
+          }
+        });
+      }, this.freezeDelay);
+      this.logger.log('Freeze loop gestart');
+    }
+
+    stop() {
+      if (this.interval) {
+        clearInterval(this.interval);
+        this.interval = null;
+        this.logger.log('Freeze loop gestopt');
+      }
+    }
+
+    listFrozen() {
+      return Array.from(this.frozenEntries.keys());
+    }
+  }
+
+  // Memory scanner engine (doorloopt JS object tree)
+  class MemoryScanner {
+    constructor(logger) {
+      this.logger = logger;
+      this.lastScanResults = new Map(); // key: addressPath string, value: {value, type}
+      this.currentScanType = null;
+      this.currentValueType = null;
+    }
+
+    // Scan types supported:
+    // exact, unknown_initial, increased, decreased, changed, unchanged
+
+    // Value types supported: int, float, double (alias float), hex, string
+
+    // addressPath is string representing locatie in object boom, bv: "window.game.score"
+    // We gebruiken adressen als strings, omdat geen echte pointer.
+
+    /**
+     * Recursief doorzoeken van object boom
+     * @param {Object} root 
+     * @param {String} valueType 
+     * @param {any} targetValue 
+     * @param {Function} onMatch callback(addrPath, value)
+     * @param {Number} maxDepth maximale diepte (default 10)
+     * @param {Boolean} searchAllAlsOnbekendInitial
+     * @returns {Promise<void>}
+     */
+    async scan(root, valueType, targetValue, scanType, maxDepth = 10, searchAllAlsOnbekendInitial = true) {
+      this.logger.log(`Scan gestart: type=${scanType}, valueType=${valueType}, targetValue=${targetValue}`);
+      this.currentScanType = scanType;
+      this.currentValueType = valueType;
+
+      let matches = new Map();
+
+      const self = this;
+
+      // Helper: converteer waarde naar vergelijkbaar formaat
+      function convertValue(val) {
+        if (val === null || val === undefined) return null;
+        switch(valueType) {
+          case 'int': return (typeof val === 'number') ? Math.floor(val) : null;
+          case 'float':
+          case 'double': return (typeof val === 'number') ? val : null;
+          case 'hex': return (typeof val === 'string') ? val.toLowerCase() : null;
+          case 'string': return (typeof val === 'string') ? val : null;
+          default: return val;
+        }
+      }
+
+      // Helper: vergelijk 2 waarden met scanType
+      function compareVals(scanType, oldVal, newVal) {
+        if (oldVal === null || newVal === null) return false;
+        switch(scanType) {
+          case 'exact': 
+            if (valueType === 'float' || valueType === 'double') return floatEquals(oldVal, newVal);
+            else return oldVal === newVal;
+          case 'unknown_initial': 
+            return true; // alles match bij eerste scan
+          case 'increased': return newVal > oldVal;
+          case 'decreased': return newVal < oldVal;
+          case 'changed': return oldVal !== newVal;
+          case 'unchanged': return oldVal === newVal;
+          default: return false;
+        }
+      }
+
+      // Async recursive object walker
+      async function walk(obj, path, depth) {
+        if (depth > maxDepth) return;
+        if (!obj || (typeof obj !== 'object' && typeof obj !== 'function')) return;
+
+        try {
+          for (let key in obj) {
+            if (!Object.prototype.hasOwnProperty.call(obj, key)) continue;
+
+            // Check cyclus
+            let nextPath = path ? `${path}.${key}` : key;
+
+            let val;
+            try {
+              val = obj[key];
+            } catch {
+              continue; // property kan get thrown als niet toegankelijk
+            }
+            if (val === undefined) continue;
+
+            // Converteer val
+            let convVal = convertValue(val);
+            if (convVal === null) {
+              // Verder zoeken als object
+              if (typeof val === 'object' && val !== null) {
+                await walk(val, nextPath, depth+1);
+              }
+              continue;
+            }
+
+            // Bepaal oldVal (voor vervolg scans)
+            let oldEntry = self.lastScanResults.get(nextPath);
+            let oldVal = oldEntry ? oldEntry.value : null;
+
+            // Check match op basis scanType
+            if (compareVals(scanType, oldVal, convVal)) {
+              matches.set(nextPath, {value: convVal, type: valueType});
+            }
+          }
+        } catch(e) {
+          self.logger.log(`Error tijdens scan walk: ${e.message}`);
+        }
+      }
+
+      // Voor eerste scan: targetValue kan null, dan zoeken we alles (unknown_initial)
+      // Bij unknown_initial zoeken we alles, anders alleen matches met targetValue
+
+      if (scanType === 'unknown_initial' && (targetValue === null || targetValue === undefined)) {
+        // Zoek alles en sla op (geen filter)
+        await walk(root, '', 0);
+      } else {
+        // Eerste scan: zoek exacte matches of filter voor volgende scans
+        await walk(root, '', 0);
+        // Filter matches voor exact targetValue als unknown_initial
+        if (scanType === 'unknown_initial' && targetValue !== null && targetValue !== undefined) {
+          for (let [k,v] of matches) {
+            if (valueType === 'string' || valueType === 'hex') {
+              if (!v.value.includes(targetValue)) {
+                matches.delete(k);
+              }
+            } else {
+              if (v.value !== targetValue) {
+                matches.delete(k);
+              }
+            }
+          }
+        }
+      }
+
+      this.lastScanResults = matches;
+      this.logger.log(`Scan klaar, resultaten: ${matches.size}`);
+    }
+
+    getResults() {
+      return this.lastScanResults;
+    }
+
+    clearResults() {
+      this.lastScanResults.clear();
+    }
+  }
+
+  // Main UCE object
+  const UCE = {
+    logger: new Logger(),
+    freezeManager: null,
+    scanner: null,
+
+    init() {
+      this.logger.log('UniversalCheatEngine initialiseren...');
+      this.freezeManager = new FreezeManager(this.logger);
+      this.scanner = new MemoryScanner(this.logger);
+      this.logger.log('UniversalCheatEngine gereed. Run UCE.help() voor gebruik.');
+    },
+
+    help() {
+      console.log(`
+      UniversalCheatEngine Help:
+
+      Start scan:
+      UCE.startScan({valueType:'int|float|double|hex|string', scanType:'unknown_initial|exact|increased|decreased|changed|unchanged', value:targetValue});
+
+      Volgende scan filteren:
+      UCE.nextScan({scanType:'exact|increased|decreased|changed|unchanged', value:targetValue});
+
+      Resultaten bekijken:
+      UCE.printResults();
+
+      Freeze waarde:
+      UCE.freezeAddress(addressPath);
+
+      Unfreeze:
+      UCE.unfreezeAddress(addressPath);
+
+      Logs tonen:
+      UCE.printLogs();
+
+      Logs wissen:
+      UCE.clearLogs();
+
+      Frozen adressen:
+      UCE.listFrozen();
+
+      Reset resultaten:
+      UCE.resetScan();
+
+      `);
+    },
+
+    /**
+     * Parse user input value
+     */
+    parseInputValue(type, val) {
+      if (val === null || val === undefined) return null;
+      switch(type) {
+        case 'int': return parseInt(val);
+        case 'float':
+        case 'double': return parseFloat(val);
+        case 'hex': 
+          if (typeof val === 'string') {
+            val = val.replace(/^0x/, '');
+            return val.toLowerCase();
+          }
+          return null;
+        case 'string': return val.toString();
+        default: return val;
+      }
+    },
+
+    async startScan({valueType='int', scanType='unknown_initial', value=null, maxDepth=10} = {}) {
+      this.logger.log(`Start scan met type=${scanType}, valueType=${valueType}, value=${value}`);
+      let parsedVal = this.parseInputValue(valueType, value);
+
+      await this.scanner.scan(window, valueType, parsedVal, scanType, maxDepth);
+
+      this.logger.log(`Scan compleet. Resultaten: ${this.scanner.getResults().size}`);
+      this.printResults();
+    },
+
+    async nextScan({scanType='exact', value=null} = {}) {
+      if (!this.scanner.lastScanResults || this.scanner.lastScanResults.size === 0) {
+        this.logger.log('Geen vorige scan resultaten beschikbaar.');
+        return;
+      }
+      let valueType = this.scanner.currentValueType;
+      let parsedVal = this.parseInputValue(valueType, value);
+
+      // Bij next scan filter je huidige resultaten opnieuw, dus je scant opnieuw maar filtert old vs new values
+      // Hiervoor maken we een tijdelijke map, waarin we alleen resultaten behouden die voldoen aan scanType.
+
+      this.logger.log(`Volgende scan gestart: filter op ${scanType} met waarde ${parsedVal}`);
+
+      // Maak snapshot van oude waarden
+      const oldResults = new Map(this.scanner.lastScanResults);
+      const newResults = new Map();
+
+      // Async check nieuwe waarden
+      for (const [addressPath, oldEntry] of oldResults) {
+        let parts = addressPath.split('.');
+        let currentObj = window;
+        let accessible = true;
+
+        for (let i = 1; i < parts.length; i++) {
+          if (currentObj && parts[i] in currentObj) {
+            currentObj = currentObj[parts[i]];
+          } else {
+            accessible = false;
+            break;
+          }
+        }
+        if (!accessible) continue;
+
+        let newVal = currentObj;
+
+        // convert newVal
+        if (valueType === 'int') newVal = (typeof newVal === 'number') ? Math.floor(newVal) : null;
+        else if (valueType === 'float' || valueType === 'double') newVal = (typeof newVal === 'number') ? newVal : null;
+        else if (valueType === 'string') newVal = (typeof newVal === 'string') ? newVal : null;
+        else if (valueType === 'hex' && typeof newVal === 'string') newVal = newVal.toLowerCase();
+        else newVal = null;
+
+        if (newVal === null) continue;
+
+        // vergelijk oude waarde met nieuwe
+        let oldVal = oldEntry.value;
+
+        // Check scanType
+        let match = false;
+        switch(scanType) {
+          case 'exact':
+            if (valueType === 'float' || valueType === 'double') match = floatEquals(oldVal, newVal);
+            else match = (oldVal === newVal);
+            break;
+          case 'increased':
+            match = (newVal > oldVal);
+            break;
+          case 'decreased':
+            match = (newVal < oldVal);
+            break;
+          case 'changed':
+            match = (oldVal !== newVal);
+            break;
+          case 'unchanged':
+            match = (oldVal === newVal);
+            break;
+          default:
+            match = false;
+        }
+        if (match) {
+          newResults.set(addressPath, {value: newVal, type: valueType});
+        }
+      }
+      this.scanner.lastScanResults = newResults;
+      this.logger.log(`Volgende scan compleet. Resultaten: ${newResults.size}`);
+      this.printResults();
+    },
+
+    printResults() {
+      const results = this.scanner.getResults();
+      if (results.size === 0) {
+        console.log('Geen resultaten gevonden.');
+        return;
+      }
+      console.groupCollapsed(`Scan Resultaten (${results.size})`);
+      for (let [address, entry] of results) {
+        console.log(`${address}: ${entry.value} [${entry.type}]`);
+      }
+      console.groupEnd();
+    },
+
+    printLogs() {
+      const logs = this.logger.getAll();
+      console.groupCollapsed(`Logs (${logs.length})`);
+      logs.forEach(l => console.log(l));
+      console.groupEnd();
+    },
+
+    clearLogs() {
+      this.logger.clear();
+    },
+
+    freezeAddress(addressPath) {
+      // Probeer waarde te lezen en te schrijven via eval (omdat we geen pointers hebben)
+      if (!addressPath || typeof addressPath !== 'string') {
+        this.logger.log('Ongeldig adresPad opgegeven.');
+        return false;
+      }
+      try {
+        let getValueFunc = () => {
+          return eval(addressPath);
+        };
+        let setValueFunc = (v) => {
+          eval(`${addressPath} = ${JSON.stringify(v)}`);
+        };
+        return this.freezeManager.freeze(addressPath, getValueFunc, setValueFunc);
+      } catch (e) {
+        this.logger.log(`Fout bij freeze adres ${addressPath}: ${e.message}`);
+        return false;
+      }
+    },
+
+    unfreezeAddress(addressPath) {
+      this.freezeManager.unfreeze(addressPath);
+    },
+
+    listFrozen() {
+      let frozen = this.freezeManager.listFrozen();
+      if (frozen.length === 0) {
+        console.log('Geen gefroren adressen.');
+      } else {
+        console.log('Gefroren adressen:');
+        frozen.forEach(addr => console.log(addr));
+      }
+      return frozen;
+    },
+
+    resetScan() {
+      this.scanner.clearResults();
+      this.logger.log('Scan resultaten gereset.');
+    }
+
+  };
+
+  // Init UCE
+  UCE.init();
+
+  // Expose globally
+  window.UCE = UCE;
+
+  // Prompt voor help
+  console.log('UniversalCheatEngine geladen. Run UCE.help() voor commando\'s.');
+
+})();
+(() => {
+  "use strict";
+
+  // Extra functies om data te manipuleren
+  class ValueEditor {
+    constructor(logger) {
+      this.logger = logger;
+    }
+
+    /**
+     * Wijzig de waarde van een object, array, of primitive waarde
+     * @param {string} addressPath Pad naar het adres (bijv. 'window.game.score')
+     * @param {any} newValue Nieuwe waarde om te zetten naar het adres
+     */
+    editValue(addressPath, newValue) {
+      try {
+        const currentValue = eval(addressPath);
+        if (currentValue === undefined || currentValue === null) {
+          this.logger.log(`Waarde op ${addressPath} bestaat niet of is null/undefined`);
+          return false;
+        }
+
+        // Verander de waarde naar nieuwe waarde
+        eval(`${addressPath} = ${JSON.stringify(newValue)}`);
+        this.logger.log(`Waarde op ${addressPath} succesvol gewijzigd naar: ${newValue}`);
+        return true;
+      } catch (e) {
+        this.logger.log(`Fout bij het bewerken van ${addressPath}: ${e.message}`);
+        return false;
+      }
+    }
+  }
+
+  // Voor geavanceerdere scan types (bijv. 'contains' voor strings)
+  class AdvancedMemoryScanner extends MemoryScanner {
+    constructor(logger) {
+      super(logger);
+    }
+
+    /**
+     * Voeg extra scan type toe voor "contains" voor strings
+     */
+    async scan(root, valueType, targetValue, scanType, maxDepth = 10) {
+      this.logger.log(`Scan gestart: type=${scanType}, valueType=${valueType}, targetValue=${targetValue}`);
+      this.currentScanType = scanType;
+      this.currentValueType = valueType;
+
+      let matches = new Map();
+
+      const self = this;
+
+      // Helper om waarde te converteren naar het juiste type
+      function convertValue(val) {
+        if (val === null || val === undefined) return null;
+        switch(valueType) {
+          case 'int': return (typeof val === 'number') ? Math.floor(val) : null;
+          case 'float':
+          case 'double': return (typeof val === 'number') ? val : null;
+          case 'hex': return (typeof val === 'string') ? val.toLowerCase() : null;
+          case 'string': return (typeof val === 'string') ? val : null;
+          default: return val;
+        }
+      }
+
+      // Extra scantype: 'contains' voor string matching
+      function compareVals(scanType, oldVal, newVal) {
+        if (oldVal === null || newVal === null) return false;
+        switch(scanType) {
+          case 'exact': 
+            if (valueType === 'float' || valueType === 'double') return floatEquals(oldVal, newVal);
+            else return oldVal === newVal;
+          case 'contains':
+            return (typeof oldVal === 'string' && typeof newVal === 'string' && newVal.includes(oldVal));
+          case 'unknown_initial': 
+            return true; // alles match bij eerste scan
+          case 'increased': return newVal > oldVal;
+          case 'decreased': return newVal < oldVal;
+          case 'changed': return oldVal !== newVal;
+          case 'unchanged': return oldVal === newVal;
+          default: return false;
+        }
+      }
+
+      async function walk(obj, path, depth) {
+        if (depth > maxDepth) return;
+        if (!obj || (typeof obj !== 'object' && typeof obj !== 'function')) return;
+
+        try {
+          for (let key in obj) {
+            if (!Object.prototype.hasOwnProperty.call(obj, key)) continue;
+
+            let nextPath = path ? `${path}.${key}` : key;
+            let val;
+            try {
+              val = obj[key];
+            } catch {
+              continue; // property kan get thrown als niet toegankelijk
+            }
+            if (val === undefined) continue;
+
+            let convVal = convertValue(val);
+            if (convVal === null) {
+              if (typeof val === 'object' && val !== null) {
+                await walk(val, nextPath, depth + 1);
+              }
+              continue;
+            }
+
+            let oldEntry = self.lastScanResults.get(nextPath);
+            let oldVal = oldEntry ? oldEntry.value : null;
+
+            if (compareVals(scanType, oldVal, convVal)) {
+              matches.set(nextPath, {value: convVal, type: valueType});
+            }
+          }
+        } catch (e) {
+          self.logger.log(`Error tijdens scan walk: ${e.message}`);
+        }
+      }
+
+      // Zoek naar matches
+      if (scanType === 'unknown_initial' && (targetValue === null || targetValue === undefined)) {
+        await walk(root, '', 0);
+      } else {
+        await walk(root, '', 0);
+      }
+
+      this.lastScanResults = matches;
+      this.logger.log(`Scan klaar, resultaten: ${matches.size}`);
+    }
+  }
+
+  // Verbeterde logger met filters
+  class FilteredLogger extends Logger {
+    constructor() {
+      super();
+      this.filters = [];
+    }
+
+    /**
+     * Voeg een filter toe die logs zal filteren op basis van de tekst
+     * @param {string} filterStr Tekst die gefilterd moet worden
+     */
+    addFilter(filterStr) {
+      this.filters.push(filterStr);
+      this.log(`Filter toegevoegd: ${filterStr}`);
+    }
+
+    /**
+     * Filter logs en toon ze met een filter tekst
+     */
+    getFilteredLogs() {
+      return this.logs.filter(log => this.filters.every(filter => log.includes(filter)));
+    }
+
+    /**
+     * Clear alle filters
+     */
+    clearFilters() {
+      this.filters = [];
+      this.log('Alle filters gewist.');
+    }
+  }
+
+  // Nieuwe Functionaliteit: Multi-threaded scanning voor grotere datasets
+  class MultiThreadedScanner extends AdvancedMemoryScanner {
+    constructor(logger) {
+      super(logger);
+      this.threads = 4;
+    }
+
+    // Gebruik async/await om scanning multi-threaded te maken (met concurrency)
+    async multiThreadedScan(root, valueType, targetValue, scanType, maxDepth = 10) {
+      const threadPromises = [];
+      const chunkSize = Math.ceil(Object.keys(root).length / this.threads);
+      let currentIndex = 0;
+      
+      for (let i = 0; i < this.threads; i++) {
+        const threadStart = currentIndex;
+        const threadEnd = Math.min(threadStart + chunkSize, Object.keys(root).length);
+
+        // Creëer nieuwe thread (scan deel van het object)
+        const threadPromise = this._scanChunk(root, valueType, targetValue, scanType, threadStart, threadEnd, maxDepth);
+        threadPromises.push(threadPromise);
+
+        currentIndex = threadEnd;
+      }
+
+      // Wacht totdat alle threads klaar zijn
+      await Promise.all(threadPromises);
+      this.logger.log(`Multi-threaded scan voltooid.`);
+    }
+
+    // Scan voor een chunk van de object data
+    async _scanChunk(root, valueType, targetValue, scanType, startIndex, endIndex, maxDepth) {
+      const keys = Object.keys(root).slice(startIndex, endIndex);
+      for (let key of keys) {
+        const val = root[key];
+        const convertedVal = this.convertValue(val);
+        if (convertedVal !== null && this.compareVals(scanType, targetValue, convertedVal)) {
+          this.lastScanResults.set(key, {value: convertedVal, type: valueType});
+        }
+      }
+    }
+  }
+
+  // UCE uitbreiding met de nieuwe functionaliteiten
+  const UCE = {
+    logger: new FilteredLogger(),
+    freezeManager: null,
+    scanner: null,
+    valueEditor: null,
+
+    init() {
+      this.logger.log('UniversalCheatEngine 2.0 geladen...');
+      this.freezeManager = new FreezeManager(this.logger);
+      this.scanner = new MultiThreadedScanner(this.logger);
+      this.valueEditor = new ValueEditor(this.logger);
+      this.logger.log('UniversalCheatEngine gereed. Run UCE.help() voor commando\'s.');
+    },
+
+    /**
+     * Start een scan met verbeterde functionaliteit
+     * @param {object} options Opties voor de scan
+     */
+    async startScan({valueType = 'int', scanType = 'unknown_initial', value = null, maxDepth = 10} = {}) {
+      this.logger.log(`Start scan met type=${scanType}, valueType=${valueType}, value=${value}`);
+      let parsedVal = this.parseInputValue(valueType, value);
+      await this.scanner.multiThreadedScan(window, valueType, parsedVal, scanType, maxDepth);
+      this.logger.log(`Scan voltooid! Resultaten: ${this.scanner.getResults().size}`);
+      this.printResults();
+    },
+
+    /**
+     * Wijzig een specifieke waarde in het geheugen
+     * @param {string} address Pad naar het object (bv. window.game.score)
+     * @param {any} newValue Nieuwe waarde
+     */
+    editMemory(address, newValue) {
+      this.valueEditor.editValue(address, newValue);
+    }
+  };
+
+  // Initialisatie
+  UCE.init();
+
+  // Exposeer UCE global
+  window.UCE = UCE;
+
+  console.log('Gebruik UCE.help() voor hulp.');
+})();
+(() => {
+  "use strict";
+
+  // De Logger wordt verder geoptimaliseerd
+  class AdvancedLogger extends FilteredLogger {
+    constructor() {
+      super();
+    }
+
+    /**
+     * Toon alle logs in de console met extra details.
+     */
+    printLogs() {
+      const logs = this.getFilteredLogs();
+      if (logs.length === 0) {
+        console.log('Geen logs beschikbaar.');
+      } else {
+        console.groupCollapsed('Geavanceerde Logs:');
+        logs.forEach(log => {
+          console.log(log);
+        });
+        console.groupEnd();
+      }
+    }
+
+    /**
+     * Sla logs op naar een extern bestand (mock functie)
+     */
+    saveLogsToFile() {
+      const logs = this.getFilteredLogs();
+      const blob = new Blob([logs.join('\n')], {type: 'text/plain'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'logs.txt';
+      a.click();
+    }
+  }
+
+  // Log Tab
+  class LogsTab {
+    constructor(logger) {
+      this.logger = logger;
+      this.logsTabElement = document.getElementById('logs-tab');
+      this.filterInput = document.getElementById('filter-logs');
+      this.saveButton = document.getElementById('save-logs');
+    }
+
+    init() {
+      this.filterInput.addEventListener('input', (e) => this.filterLogs(e.target.value));
+      this.saveButton.addEventListener('click', () => this.logger.saveLogsToFile());
+    }
+
+    /**
+     * Filter de logs op basis van de zoekopdracht
+     */
+    filterLogs(filterString) {
+      this.logger.addFilter(filterString);
+      this.refreshLogDisplay();
+    }
+
+    /**
+     * Vernieuw de logsweergave in de tab
+     */
+    refreshLogDisplay() {
+      const logsContainer = this.logsTabElement.querySelector('.log-container');
+      logsContainer.innerHTML = '';
+      this.logger.printLogs();
+    }
+  }
+
+  // Interface componenten zoals de Tab Switcher
+  class TabSwitcher {
+    constructor() {
+      this.tabs = document.querySelectorAll('.tab');
+      this.tabButtons = document.querySelectorAll('.tab-button');
+    }
+
+    /**
+     * Switch tussen verschillende tabs op basis van de actieve knop
+     * @param {string} activeTabId De ID van de actieve tab
+     */
+    switchTab(activeTabId) {
+      this.tabs.forEach(tab => tab.classList.add('hidden'));
+      const activeTab = document.getElementById(activeTabId);
+      if (activeTab) {
+        activeTab.classList.remove('hidden');
+      }
+      this.updateActiveTabButton(activeTabId);
+    }
+
+    /**
+     * Update de actieve tab-knop
+     * @param {string} activeTabId De ID van de actieve tab
+     */
+    updateActiveTabButton(activeTabId) {
+      this.tabButtons.forEach(button => button.classList.remove('active'));
+      const activeButton = document.querySelector(`.tab-button[data-tab="${activeTabId}"]`);
+      if (activeButton) {
+        activeButton.classList.add('active');
+      }
+    }
+  }
+
+  // Geavanceerde configuratie instellingen
+  class Configurator {
+    constructor() {
+      this.settings = {
+        autoScanInterval: 1000,
+        maxDepth: 10
+      };
+    }
+
+    /**
+     * Update de configuratie instellingen
+     * @param {string} setting De instelling die je wilt aanpassen
+     * @param {any} value De nieuwe waarde voor de instelling
+     */
+    updateSetting(setting, value) {
+      if (this.settings.hasOwnProperty(setting)) {
+        this.settings[setting] = value;
+        console.log(`Instelling ${setting} bijgewerkt naar ${value}`);
+      } else {
+        console.error(`Instelling ${setting} niet gevonden!`);
+      }
+    }
+
+    /**
+     * Toon alle huidige instellingen
+     */
+    displaySettings() {
+      console.log('Huidige Instellingen:', this.settings);
+    }
+  }
+
+  // Voeg tab functionaliteit toe aan de interface
+  class Interface {
+    constructor() {
+      this.tabSwitcher = new TabSwitcher();
+      this.logsTab = new LogsTab(new AdvancedLogger());
+      this.configurator = new Configurator();
+    }
+
+    /**
+     * Initieer de UI en voeg event listeners toe
+     */
+    init() {
+      this.tabSwitcher.switchTab('scan-tab'); // Zet default tab naar scan
+      this.logsTab.init();
+      this.addConfigEventListeners();
+    }
+
+    /**
+     * Voeg configuratie event listeners toe
+     */
+    addConfigEventListeners() {
+      const intervalInput = document.getElementById('auto-scan-interval');
+      const maxDepthInput = document.getElementById('max-depth-input');
+
+      intervalInput.addEventListener('change', () => {
+        this.configurator.updateSetting('autoScanInterval', parseInt(intervalInput.value));
+      });
+
+      maxDepthInput.addEventListener('change', () => {
+        this.configurator.updateSetting('maxDepth', parseInt(maxDepthInput.value));
+      });
+    }
+
+    /**
+     * Handig hulpmiddel om configuratie-instellingen te laden via de UI
+     */
+    loadConfiguration() {
+      document.getElementById('auto-scan-interval').value = this.configurator.settings.autoScanInterval;
+      document.getElementById('max-depth-input').value = this.configurator.settings.maxDepth;
+    }
+  }
+
+  // UniversalCheatEngine uitbreiden met interface en configuraties
+  const UCE = {
+    logger: new AdvancedLogger(),
+    freezeManager: null,
+    scanner: null,
+    valueEditor: null,
+    interface: null,
+    configurator: null,
+
+    init() {
+      this.logger.log('UniversalCheatEngine 3.0 geladen...');
+      this.freezeManager = new FreezeManager(this.logger);
+      this.scanner = new MultiThreadedScanner(this.logger);
+      this.valueEditor = new ValueEditor(this.logger);
+      this.interface = new Interface();
+      this.configurator = new Configurator();
+      this.interface.init();
+      this.logger.log('UniversalCheatEngine gereed. Run UCE.help() voor commando\'s.');
+    },
+
+    /**
+     * Start een scan met verbeterde functionaliteit
+     * @param {object} options Opties voor de scan
+     */
+    async startScan({valueType = 'int', scanType = 'unknown_initial', value = null, maxDepth = 10} = {}) {
+      this.logger.log(`Start scan met type=${scanType}, valueType=${valueType}, value=${value}`);
+      let parsedVal = this.parseInputValue(valueType, value);
+      await this.scanner.multiThreadedScan(window, valueType, parsedVal, scanType, maxDepth);
+      this.logger.log(`Scan voltooid! Resultaten: ${this.scanner.getResults().size}`);
+      this.printResults();
+    },
+
+    /**
+     * Wijzig een specifieke waarde in het geheugen
+     * @param {string} address Pad naar het object (bv. window.game.score)
+     * @param {any} newValue Nieuwe waarde
+     */
+    editMemory(address, newValue) {
+      this.valueEditor.editValue(address, newValue);
+    },
+
+    /**
+     * Reset alle instellingen
+     */
+    resetSettings() {
+      this.configurator.updateSetting('autoScanInterval', 1000);
+      this.configurator.updateSetting('maxDepth', 10);
+    },
+
+    /**
+     * Toon de instellingen
+     */
+    showSettings() {
+      this.configurator.displaySettings();
+    }
+  };
+
+  // Initialisatie
+  UCE.init();
+
+  // Exposeer UCE global
+  window.UCE = UCE;
+
+  console.log('Gebruik UCE.help() voor hulp.');
+})();
+(() => {
+  "use strict";
+
+  // Freeze Manager
+  class FreezeManager {
+    constructor(logger) {
+      this.frozenValues = new Map();
+      this.logger = logger;
+    }
+
+    /**
+     * Voeg een variabele toe aan de frozen lijst en vergrendel deze waarde.
+     * @param {string} addressPath Het pad naar het object of variabele (bv. 'window.game.score')
+     * @param {Function} getValueFunc Functie om de waarde van het adres op te halen
+     * @param {Function} setValueFunc Functie om de waarde van het adres in te stellen
+     */
+    freeze(addressPath, getValueFunc, setValueFunc) {
+      if (this.frozenValues.has(addressPath)) {
+        this.logger.log(`Adres ${addressPath} is al bevroren.`);
+        return false;
+      }
+      this.frozenValues.set(addressPath, {getValueFunc, setValueFunc});
+      this.logger.log(`Bevroren waarde op ${addressPath}.`);
+
+      // Override de setter om de waarde constant te houden
+      this.overrideValue(addressPath, getValueFunc, setValueFunc);
+      return true;
+    }
+
+    /**
+     * Verwijder een variabele uit de frozen lijst
+     * @param {string} addressPath Het pad naar het object of variabele
+     */
+    unfreeze(addressPath) {
+      if (this.frozenValues.has(addressPath)) {
+        this.frozenValues.delete(addressPath);
+        this.logger.log(`Bevroren waarde op ${addressPath} is ontgrendeld.`);
+      }
+    }
+
+    /**
+     * Toon alle bevroren waarden
+     */
+    listFrozen() {
+      return [...this.frozenValues.keys()];
+    }
+
+    /**
+     * Intercept de setter om de waarde constant te houden
+     * @param {string} addressPath Het pad naar het object
+     * @param {Function} getValueFunc Functie om de waarde van het adres op te halen
+     * @param {Function} setValueFunc Functie om de waarde van het adres in te stellen
+     */
+    overrideValue(addressPath, getValueFunc, setValueFunc) {
+      const originalValue = getValueFunc();
+
+      // Houd de waarde vast
+      Object.defineProperty(window, addressPath, {
+        get: function() {
+          return originalValue;
+        },
+        set: function(value) {
+          setValueFunc(value);
+        },
+        configurable: true
+      });
+    }
+  }
+
+  // Geavanceerde Scan Class (dieper zoeken in objecten)
+  class DeepMemoryScanner extends MultiThreadedScanner {
+    constructor(logger) {
+      super(logger);
+    }
+
+    /**
+     * Scan meerdere niveaus van een object
+     * @param {Object} root Het root-object om te doorzoeken
+     * @param {string} valueType Het type waarde dat we zoeken
+     * @param {any} targetValue De doelwaarde waar we naar zoeken
+     * @param {string} scanType Het type scan (exact, increased, etc.)
+     * @param {number} maxDepth Maximaal aantal niveaus van scan
+     */
+    async deepScan(root, valueType, targetValue, scanType, maxDepth = 10) {
+      this.logger.log(`Diepe scan gestart: ${scanType}, ${valueType}, maxDepth=${maxDepth}`);
+      const matches = new Map();
+      await this.walkObject(root, valueType, targetValue, scanType, '', matches, maxDepth);
+      this.lastScanResults = matches;
+      this.logger.log(`Diepe scan voltooid. Aantal resultaten: ${matches.size}`);
+    }
+
+    /**
+     * Diepe object scanfunctie
+     * @param {Object} obj Het object dat we scannen
+     * @param {string} valueType Het type waarde dat we zoeken
+     * @param {any} targetValue De doelwaarde waar we naar zoeken
+     * @param {string} scanType Het type scan
+     * @param {string} path Het huidige pad van het object
+     * @param {Map} matches Resultaten die gevonden zijn
+     * @param {number} depth De diepte van de huidige scan
+     * @param {number} maxDepth Maximale scan diepte
+     */
+    async walkObject(obj, valueType, targetValue, scanType, path, matches, maxDepth, depth = 0) {
+      if (depth > maxDepth || !obj || (typeof obj !== 'object' && typeof obj !== 'function')) return;
+      for (let key in obj) {
+        if (!Object.prototype.hasOwnProperty.call(obj, key)) continue;
+        const currentPath = path ? `${path}.${key}` : key;
+        let val;
+
+        try {
+          val = obj[key];
+        } catch {
+          continue; // property kan get thrown als niet toegankelijk
+        }
+        if (val === undefined) continue;
+
+        const convertedVal = this.convertValue(val);
+        if (convertedVal !== null && this.compareVals(scanType, targetValue, convertedVal)) {
+          matches.set(currentPath, {value: convertedVal, type: valueType});
+        }
+
+        // Recursieve scan van objecten
+        if (typeof val === 'object' && val !== null) {
+          await this.walkObject(val, valueType, targetValue, scanType, currentPath, matches, maxDepth, depth + 1);
+        }
+      }
+    }
+  }
+
+  // Netwerk Monitoren (optioneel)
+  class NetworkMonitor {
+    constructor(logger) {
+      this.logger = logger;
+      this.requests = [];
+    }
+
+    /**
+     * Start de monitoring van netwerkverzoeken
+     */
+    start() {
+      this.logger.log('Netwerkmonitor gestart. Alle netwerkverzoeken worden gevolgd.');
+      const originalFetch = window.fetch;
+      window.fetch = async (...args) => {
+        const response = await originalFetch(...args);
+        this.logRequest(args, response);
+        return response;
+      };
+    }
+
+    /**
+     * Log netwerkverzoeken
+     * @param {Array} args De argumenten van de fetch-aanroep
+     * @param {Response} response Het response-object
+     */
+    logRequest(args, response) {
+      const request = {
+        url: args[0],
+        method: args[1]?.method || 'GET',
+        status: response.status
+      };
+      this.requests.push(request);
+      this.logger.log(`Netwerkverzoek: ${request.method} ${request.url} Status: ${request.status}`);
+    }
+
+    /**
+     * Toon alle netwerkverzoeken
+     */
+    printRequests() {
+      if (this.requests.length === 0) {
+        this.logger.log('Geen netwerkverzoeken geregistreerd.');
+        return;
+      }
+
+      console.group('Netwerkverzoeken:');
+      this.requests.forEach(req => {
+        console.log(`${req.method} ${req.url} - Status: ${req.status}`);
+      });
+      console.groupEnd();
+    }
+  }
+
+  // Initialisatie van UCE (Universal Cheat Engine)
+  const UCE = {
+    logger: new AdvancedLogger(),
+    freezeManager: null,
+    scanner: null,
+    valueEditor: null,
+    networkMonitor: null,
+    configurator: null,
+
+    init() {
+      this.logger.log('UniversalCheatEngine 4.0 geladen...');
+      this.freezeManager = new FreezeManager(this.logger);
+      this.scanner = new DeepMemoryScanner(this.logger);
+      this.valueEditor = new ValueEditor(this.logger);
+      this.networkMonitor = new NetworkMonitor(this.logger);
+      this.configurator = new Configurator();
+      this.logger.log('UniversalCheatEngine gereed. Run UCE.help() voor commando\'s.');
+    },
+
+    /**
+     * Start een diepere scan op het geheugen
+     * @param {object} options Opties voor de scan
+     */
+    async startDeepScan({valueType = 'int', scanType = 'unknown_initial', value = null, maxDepth = 10} = {}) {
+      this.logger.log(`Diepe scan gestart met type=${scanType}, valueType=${valueType}, value=${value}`);
+      let parsedVal = this.parseInputValue(valueType, value);
+      await this.scanner.deepScan(window, valueType, parsedVal, scanType, maxDepth);
+      this.logger.log(`Scan voltooid! Resultaten: ${this.scanner.getResults().size}`);
+      this.printResults();
+    },
+
+    /**
+     * Start de netwerkmonitor
+     */
+    startNetworkMonitoring() {
+      this.networkMonitor.start();
+    },
+
+    /**
+     * Toon alle netwerkverzoeken
+     */
+    showNetworkRequests() {
+      this.networkMonitor.printRequests();
+    }
+  };
+
+  // Initialisatie
+  UCE.init();
+
+  // Exposeer UCE global
+  window.UCE = UCE;
+
+  console.log('Gebruik UCE.help() voor hulp.');
+})();
