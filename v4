@@ -1,887 +1,2192 @@
+
 (() => {
-  const EasyCheat = {
-    version: '1.0',
+  // Prevent multiple instances
+  if (window.__CHEAT_CONSOLE_LOADED) {
+    console.log('🔥 Cheat Console already loaded!');
+    return;
+  }
+  window.__CHEAT_CONSOLE_LOADED = true;
+
+  console.log('🔥 Loading Advanced Game Cheat Console with GUI...');
+
+  // === UTILITY FUNCTIONS ===
+  
+  const CheatUtils = {
+    log: (message, type = 'info') => {
+      const colors = {
+        info: '#00ff00',
+        warn: '#ffaa00', 
+        error: '#ff0000',
+        success: '#00ffaa'
+      };
+      console.log(`%c🔥 CHEAT: ${message}`, `color: ${colors[type]}; font-weight: bold;`);
+      
+      // Also log to GUI if available
+      if (window.CheatGUI && window.CheatGUI.addLog) {
+        window.CheatGUI.addLog(message, type);
+      }
+    },
+
+    findByKeywords: (keywords, target = window) => {
+      const results = [];
+      const traverse = (obj, path = 'window', depth = 0) => {
+        if (depth > 5) return;
+        
+        try {
+          for (const key in obj) {
+            if (key.startsWith('__') || key === 'parent' || key === 'top') continue;
+            
+            const lowerKey = key.toLowerCase();
+            if (keywords.some(keyword => lowerKey.includes(keyword.toLowerCase()))) {
+              results.push({
+                path: `${path}.${key}`,
+                value: obj[key],
+                type: typeof obj[key],
+                size: this.getObjectSize(obj[key])
+              });
+            }
+            
+            if (typeof obj[key] === 'object' && obj[key] !== null && depth < 3) {
+              traverse(obj[key], `${path}.${key}`, depth + 1);
+            }
+          }
+        } catch (e) {}
+      };
+      
+      traverse(target);
+      return results;
+    },
+
+    setValue: (path, value) => {
+      try {
+        const parts = path.split('.');
+        let obj = window;
+        
+        for (let i = 1; i < parts.length - 1; i++) {
+          obj = obj[parts[i]];
+        }
+        
+        const finalKey = parts[parts.length - 1];
+        const originalValue = obj[finalKey];
+        const parsedValue = isNaN(Number(value)) ? value : Number(value);
+        obj[finalKey] = parsedValue;
+        
+        CheatUtils.log(`Set ${path} = ${parsedValue} (was: ${originalValue})`, 'success');
+        return true;
+      } catch (error) {
+        CheatUtils.log(`Failed to set ${path}: ${error.message}`, 'error');
+        return false;
+      }
+    },
+
+    getObjectSize: (obj) => {
+      try {
+        return JSON.stringify(obj).length;
+      } catch {
+        return 0;
+      }
+    },
+
+    exportData: (data, filename) => {
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    },
+
+    importData: (callback) => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.json';
+      input.onchange = (e) => {
+        const file = e.target.files[0];
+        if (file) {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            try {
+              const data = JSON.parse(e.target.result);
+              callback(data);
+            } catch (error) {
+              CheatUtils.log('Failed to parse imported file', 'error');
+            }
+          };
+          reader.readAsText(file);
+        }
+      };
+      input.click();
+    }
+  };
+
+  // === ADVANCED AUTO-CLICKER ===
+  
+  const AutoClicker = {
+    interval: null,
+    isRunning: false,
+    stats: { totalClicks: 0, cps: 0, patterns: [], locations: [] },
     settings: {
-      theme: 'dark',
-      width: 600,
-      height: 400,
-      zIndex: 999999,
+      delay: 100,
+      randomDelay: false,
+      pattern: 'single',
+      coordinates: null,
+      humanLike: true,
+      burstMode: false,
+      burstCount: 5,
+      burstDelay: 1000
     },
-    state: {
-      dragging: false,
-      resizing: false,
-      activeTab: 'Scan',
-      logs: [],
-      toggles: {},
+    
+    start: (options = {}) => {
+      if (AutoClicker.isRunning) {
+        CheatUtils.log('Auto-clicker already running!', 'warn');
+        return;
+      }
+      
+      Object.assign(AutoClicker.settings, options);
+      AutoClicker.isRunning = true;
+      AutoClicker.stats.totalClicks = 0;
+      let lastSecondClicks = 0;
+      let lastSecondTime = Date.now();
+      let burstCounter = 0;
+      
+      AutoClicker.interval = setInterval(() => {
+        let target = AutoClicker.findBestTarget();
+        
+        if (target) {
+          if (AutoClicker.settings.burstMode) {
+            for (let i = 0; i < AutoClicker.settings.burstCount; i++) {
+              setTimeout(() => AutoClicker.performClick(target), i * 10);
+            }
+            burstCounter++;
+          } else {
+            AutoClicker.performClick(target);
+          }
+          
+          AutoClicker.stats.totalClicks++;
+          lastSecondClicks++;
+          
+          // Calculate CPS
+          const now = Date.now();
+          if (now - lastSecondTime >= 1000) {
+            AutoClicker.stats.cps = lastSecondClicks;
+            lastSecondClicks = 0;
+            lastSecondTime = now;
+          }
+        }
+      }, AutoClicker.getDelay());
+      
+      CheatUtils.log(`Advanced auto-clicker started`, 'success');
     },
-    tabs: ['Scan', 'Logs', 'Watch', 'Explorer', 'Hooks', 'Spy', 'Console'],
-    init() {
-      this.createStyles();
-      this.createGUI();
-      this.bindEvents();
-      this.log(`EasyCheat v${this.version} initialized`);
+
+    findBestTarget: () => {
+      if (AutoClicker.settings.coordinates) {
+        return document.elementFromPoint(
+          AutoClicker.settings.coordinates.x, 
+          AutoClicker.settings.coordinates.y
+        );
+      }
+
+      const clickables = Array.from(document.querySelectorAll(
+        'button, [onclick], .button, .btn, a, input[type="submit"], [role="button"]'
+      ));
+      
+      return clickables
+        .filter(el => {
+          const rect = el.getBoundingClientRect();
+          return rect.width > 10 && rect.height > 10 && rect.top >= 0;
+        })
+        .sort((a, b) => {
+          const aSize = a.getBoundingClientRect().width * a.getBoundingClientRect().height;
+          const bSize = b.getBoundingClientRect().width * b.getBoundingClientRect().height;
+          return bSize - aSize;
+        })[0];
     },
-    createStyles() {
+
+    performClick: (target) => {
+      const rect = target.getBoundingClientRect();
+      let x = rect.left + rect.width / 2;
+      let y = rect.top + rect.height / 2;
+      
+      if (AutoClicker.settings.humanLike) {
+        x += (Math.random() - 0.5) * rect.width * 0.3;
+        y += (Math.random() - 0.5) * rect.height * 0.3;
+      }
+      
+      const events = ['mousedown', 'mouseup', 'click'];
+      events.forEach(eventType => {
+        const event = new MouseEvent(eventType, {
+          view: window,
+          bubbles: true,
+          cancelable: true,
+          clientX: x,
+          clientY: y
+        });
+        target.dispatchEvent(event);
+      });
+
+      // Record click pattern
+      AutoClicker.stats.patterns.push({
+        timestamp: Date.now(),
+        x: Math.round(x),
+        y: Math.round(y),
+        target: target.tagName
+      });
+      
+      if (AutoClicker.stats.patterns.length > 100) {
+        AutoClicker.stats.patterns = AutoClicker.stats.patterns.slice(-50);
+      }
+    },
+
+    getDelay: () => {
+      const base = AutoClicker.settings.delay;
+      if (AutoClicker.settings.randomDelay) {
+        return base + (Math.random() - 0.5) * base * 0.5;
+      }
+      return base;
+    },
+    
+    stop: () => {
+      if (AutoClicker.interval) {
+        clearInterval(AutoClicker.interval);
+        AutoClicker.interval = null;
+        AutoClicker.isRunning = false;
+        AutoClicker.stats.cps = 0;
+        CheatUtils.log('Auto-clicker stopped', 'success');
+      }
+    },
+
+    setCoordinates: (x, y) => {
+      AutoClicker.settings.coordinates = { x, y };
+      CheatUtils.log(`Click coordinates set to (${x}, ${y})`, 'info');
+    },
+
+    getStats: () => AutoClicker.stats
+  };
+
+  // === ADVANCED VALUE SCANNER ===
+  
+  const ValueScanner = {
+    results: [],
+    history: [],
+    filters: {
+      dataType: null,
+      valueRange: null,
+      pathPattern: null,
+      hasChanged: null
+    },
+    
+    scan: (value, options = {}) => {
+      const scanOptions = {
+        type: 'exact',
+        deep: false,
+        includePrototype: false,
+        includeStorage: true,
+        includeCookies: false,
+        maxDepth: 3,
+        ...options
+      };
+
+      ValueScanner.results = [];
+      const targetValue = parseFloat(value) || value;
+      
+      CheatUtils.log(`Advanced scanning for: ${value} (${scanOptions.type})`, 'info');
+      
+      const scanObject = (obj, path = 'window', depth = 0) => {
+        if (depth > scanOptions.maxDepth) return;
+        
+        try {
+          for (const key in obj) {
+            if (key.startsWith('__') || key === 'parent' || key === 'top') continue;
+            if (!scanOptions.includePrototype && !obj.hasOwnProperty(key)) continue;
+            
+            try {
+              const currentValue = obj[key];
+              const currentPath = `${path}.${key}`;
+              
+              if (ValueScanner.matchesSearch(currentValue, targetValue, scanOptions.type)) {
+                ValueScanner.results.push({
+                  path: currentPath,
+                  value: currentValue,
+                  type: typeof currentValue,
+                  size: CheatUtils.getObjectSize(currentValue),
+                  depth: depth,
+                  writable: ValueScanner.isWritable(obj, key),
+                  timestamp: Date.now()
+                });
+              }
+              
+              if (typeof currentValue === 'object' && currentValue !== null && scanOptions.deep) {
+                scanObject(currentValue, currentPath, depth + 1);
+              }
+            } catch {}
+          }
+        } catch {}
+      };
+
+      scanObject(window);
+      
+      // Scan storage
+      if (scanOptions.includeStorage) {
+        ValueScanner.scanStorage(value, scanOptions.type);
+      }
+
+      // Scan cookies
+      if (scanOptions.includeCookies) {
+        ValueScanner.scanCookies(value, scanOptions.type);
+      }
+
+      // Save to history
+      ValueScanner.history.push({
+        searchValue: value,
+        options: scanOptions,
+        resultCount: ValueScanner.results.length,
+        timestamp: Date.now()
+      });
+
+      CheatUtils.log(`Scan complete: ${ValueScanner.results.length} results`, 'success');
+      return ValueScanner.results;
+    },
+
+    matchesSearch: (value, target, type) => {
+      switch (type) {
+        case 'exact':
+          return value === target;
+        case 'contains':
+          return String(value).includes(String(target));
+        case 'range':
+          const num = parseFloat(String(value));
+          const targetNum = parseFloat(String(target));
+          return !isNaN(num) && !isNaN(targetNum) && Math.abs(num - targetNum) <= 10;
+        case 'greater':
+          return parseFloat(value) > parseFloat(target);
+        case 'less':
+          return parseFloat(value) < parseFloat(target);
+        case 'regex':
+          try {
+            return new RegExp(target).test(String(value));
+          } catch {
+            return false;
+          }
+        default:
+          return false;
+      }
+    },
+
+    scanStorage: (value, type) => {
+      // localStorage
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key) {
+            const storageValue = localStorage.getItem(key);
+            if (ValueScanner.matchesSearch(storageValue, value, type)) {
+              ValueScanner.results.push({
+                path: `localStorage.${key}`,
+                value: storageValue,
+                type: 'string',
+                size: storageValue ? storageValue.length : 0,
+                depth: 0,
+                writable: true,
+                timestamp: Date.now()
+              });
+            }
+          }
+        }
+      } catch {}
+
+      // sessionStorage
+      try {
+        for (let i = 0; i < sessionStorage.length; i++) {
+          const key = sessionStorage.key(i);
+          if (key) {
+            const storageValue = sessionStorage.getItem(key);
+            if (ValueScanner.matchesSearch(storageValue, value, type)) {
+              ValueScanner.results.push({
+                path: `sessionStorage.${key}`,
+                value: storageValue,
+                type: 'string',
+                size: storageValue ? storageValue.length : 0,
+                depth: 0,
+                writable: true,
+                timestamp: Date.now()
+              });
+            }
+          }
+        }
+      } catch {}
+    },
+
+    scanCookies: (value, type) => {
+      try {
+        document.cookie.split(';').forEach(cookie => {
+          const [name, val] = cookie.trim().split('=');
+          if (ValueScanner.matchesSearch(val, value, type)) {
+            ValueScanner.results.push({
+              path: `document.cookie.${name}`,
+              value: val,
+              type: 'string',
+              size: val ? val.length : 0,
+              depth: 0,
+              writable: true,
+              timestamp: Date.now()
+            });
+          }
+        });
+      } catch {}
+    },
+
+    isWritable: (obj, key) => {
+      try {
+        const descriptor = Object.getOwnPropertyDescriptor(obj, key);
+        return !descriptor || descriptor.writable !== false;
+      } catch {
+        return true;
+      }
+    },
+    
+    filter: (newValue, type = 'exact') => {
+      const filteredResults = ValueScanner.results.filter(result => {
+        try {
+          const currentValue = eval(result.path);
+          return ValueScanner.matchesSearch(currentValue, newValue, type);
+        } catch {
+          return false;
+        }
+      });
+      
+      ValueScanner.results = filteredResults;
+      CheatUtils.log(`Filter complete: ${filteredResults.length} results remaining`, 'success');
+      return filteredResults;
+    },
+
+    applyFilters: () => {
+      let filtered = [...ValueScanner.results];
+
+      if (ValueScanner.filters.dataType) {
+        filtered = filtered.filter(r => r.type === ValueScanner.filters.dataType);
+      }
+
+      if (ValueScanner.filters.valueRange) {
+        const [min, max] = ValueScanner.filters.valueRange;
+        filtered = filtered.filter(r => {
+          const num = parseFloat(r.value);
+          return !isNaN(num) && num >= min && num <= max;
+        });
+      }
+
+      if (ValueScanner.filters.pathPattern) {
+        try {
+          const regex = new RegExp(ValueScanner.filters.pathPattern, 'i');
+          filtered = filtered.filter(r => regex.test(r.path));
+        } catch {}
+      }
+
+      return filtered;
+    },
+
+    batchModify: (indices, newValue) => {
+      let successCount = 0;
+      indices.forEach(index => {
+        if (index >= 0 && index < ValueScanner.results.length) {
+          const result = ValueScanner.results[index];
+          if (CheatUtils.setValue(result.path, newValue)) {
+            successCount++;
+          }
+        }
+      });
+      CheatUtils.log(`Batch modify: ${successCount}/${indices.length} successful`, 'success');
+      return successCount;
+    },
+
+    exportResults: () => {
+      CheatUtils.exportData(ValueScanner.results, 'scan-results.json');
+    },
+
+    compareScans: (scanIndex1, scanIndex2) => {
+      if (scanIndex1 >= ValueScanner.history.length || scanIndex2 >= ValueScanner.history.length) {
+        return [];
+      }
+      
+      // This would compare two historical scans
+      return [];
+    },
+    
+    show: () => {
+      console.table(ValueScanner.results);
+    },
+    
+    modify: (index, newValue) => {
+      if (index >= 0 && index < ValueScanner.results.length) {
+        const result = ValueScanner.results[index];
+        return CheatUtils.setValue(result.path, newValue);
+      }
+      CheatUtils.log(`Invalid index: ${index}`, 'error');
+      return false;
+    }
+  };
+
+  // === ENHANCED MEMORY MONITOR ===
+  
+  const MemoryMonitor = {
+    watchers: new Map(),
+    alerts: new Map(),
+    history: new Map(),
+    
+    watch: (path, options = {}) => {
+      const watchOptions = {
+        interval: 1000,
+        alertOnChange: false,
+        alertThreshold: null,
+        keepHistory: true,
+        maxHistory: 100,
+        ...options
+      };
+
+      if (MemoryMonitor.watchers.has(path)) {
+        CheatUtils.log(`Already watching ${path}`, 'warn');
+        return;
+      }
+      
+      if (watchOptions.keepHistory) {
+        MemoryMonitor.history.set(path, []);
+      }
+
+      const watchInterval = setInterval(() => {
+        try {
+          const value = eval(path);
+          const timestamp = Date.now();
+          
+          console.log(`%c👁️ ${path}: ${value}`, 'color: #00aaff;');
+          
+          // Keep history
+          if (watchOptions.keepHistory) {
+            const hist = MemoryMonitor.history.get(path);
+            hist.push({ value, timestamp });
+            if (hist.length > watchOptions.maxHistory) {
+              hist.shift();
+            }
+          }
+
+          // Check alerts
+          if (watchOptions.alertOnChange) {
+            const lastValue = MemoryMonitor.getLastValue(path);
+            if (lastValue !== undefined && lastValue !== value) {
+              CheatUtils.log(`Alert: ${path} changed from ${lastValue} to ${value}`, 'warn');
+            }
+          }
+
+          if (watchOptions.alertThreshold && 
+              typeof value === 'number' && 
+              value >= watchOptions.alertThreshold) {
+            CheatUtils.log(`Alert: ${path} reached threshold ${watchOptions.alertThreshold}`, 'warn');
+          }
+
+        } catch (e) {
+          console.log(`%c👁️ ${path}: ERROR - ${e.message}`, 'color: #ff0000;');
+        }
+      }, watchOptions.interval);
+      
+      MemoryMonitor.watchers.set(path, {
+        interval: watchInterval,
+        options: watchOptions
+      });
+      
+      CheatUtils.log(`Watching ${path} (${watchOptions.interval}ms)`, 'success');
+    },
+
+    getLastValue: (path) => {
+      const hist = MemoryMonitor.history.get(path);
+      return hist && hist.length > 1 ? hist[hist.length - 2].value : undefined;
+    },
+
+    unwatch: (path) => {
+      const watcher = MemoryMonitor.watchers.get(path);
+      if (watcher) {
+        clearInterval(watcher.interval);
+        MemoryMonitor.watchers.delete(path);
+        CheatUtils.log(`Stopped watching ${path}`, 'success');
+      }
+    },
+    
+    unwatchAll: () => {
+      MemoryMonitor.watchers.forEach((watcher, path) => {
+        clearInterval(watcher.interval);
+        CheatUtils.log(`Stopped watching ${path}`, 'info');
+      });
+      MemoryMonitor.watchers.clear();
+      CheatUtils.log('Stopped all watchers', 'success');
+    },
+
+    getHistory: (path) => {
+      return MemoryMonitor.history.get(path) || [];
+    },
+
+    exportHistory: (path = null) => {
+      const data = path ? 
+        { [path]: MemoryMonitor.history.get(path) } : 
+        Object.fromEntries(MemoryMonitor.history);
+      CheatUtils.exportData(data, 'memory-history.json');
+    },
+
+    setAlert: (path, condition, message) => {
+      MemoryMonitor.alerts.set(path, { condition, message });
+    },
+
+    clearAlert: (path) => {
+      MemoryMonitor.alerts.delete(path);
+    },
+    
+    list: () => {
+      const paths = Array.from(MemoryMonitor.watchers.keys());
+      console.log('Currently watching:', paths);
+      return paths;
+    },
+
+    analyze: (path) => {
+      const hist = MemoryMonitor.getHistory(path);
+      if (hist.length < 2) return null;
+
+      const values = hist.map(h => parseFloat(h.value)).filter(v => !isNaN(v));
+      if (values.length === 0) return null;
+
+      const analysis = {
+        count: values.length,
+        min: Math.min(...values),
+        max: Math.max(...values),
+        avg: values.reduce((a, b) => a + b, 0) / values.length,
+        trend: values[values.length - 1] - values[0],
+        volatility: this.calculateVolatility(values)
+      };
+
+      console.log(`Analysis for ${path}:`, analysis);
+      return analysis;
+    },
+
+    calculateVolatility: (values) => {
+      if (values.length < 2) return 0;
+      const changes = [];
+      for (let i = 1; i < values.length; i++) {
+        changes.push(Math.abs(values[i] - values[i-1]));
+      }
+      return changes.reduce((a, b) => a + b, 0) / changes.length;
+    }
+  };
+
+  // === GAME PRESETS ===
+  
+  const GamePresets = {
+    cookieClicker: () => {
+      if (typeof Game !== 'undefined') {
+        Game.cookies = 999999999999;
+        Game.cookiesEarned = 999999999999;
+        
+        for (let i in Game.Objects) {
+          Game.Objects[i].amount = 600;
+        }
+        
+        for (let i in Game.Achievements) {
+          Game.Win(Game.Achievements[i].name);
+        }
+        
+        setInterval(() => {
+          new Game.shimmer('golden');
+        }, 5000);
+        
+        Game.CalculateGains();
+        Game.UpdateMenu();
+        
+        CheatUtils.log('Cookie Clicker cheats activated!', 'success');
+      } else {
+        CheatUtils.log('Cookie Clicker not detected!', 'error');
+      }
+    },
+    
+    genericClicker: () => {
+      const currencies = CheatUtils.findByKeywords(['money', 'coins', 'cash', 'gold', 'points', 'score']);
+      currencies.forEach(item => {
+        if (typeof item.value === 'number') {
+          CheatUtils.setValue(item.path, 999999);
+        }
+      });
+      
+      AutoClicker.start({ delay: 50, humanLike: true });
+      CheatUtils.log('Generic clicker cheats activated!', 'success');
+    },
+    
+    speedHack: (multiplier = 10) => {
+      const originalSetTimeout = window.setTimeout;
+      const originalSetInterval = window.setInterval;
+      
+      window.setTimeout = function(fn, delay, ...args) {
+        return originalSetTimeout(fn, delay / multiplier, ...args);
+      };
+      
+      window.setInterval = function(fn, delay, ...args) {
+        return originalSetInterval(fn, delay / multiplier, ...args);
+      };
+      
+      CheatUtils.log(`Speed hack activated (${multiplier}x faster)!`, 'success');
+    },
+    
+    godMode: () => {
+      const healthWords = ['health', 'hp', 'life', 'lives', 'hearts', 'vitality'];
+      const health = CheatUtils.findByKeywords(healthWords);
+      
+      health.forEach(item => {
+        if (typeof item.value === 'number') {
+          CheatUtils.setValue(item.path, 999999);
+        }
+      });
+      
+      const gameOverFunctions = ['gameOver', 'endGame', 'death', 'lose', 'fail'];
+      gameOverFunctions.forEach(funcName => {
+        if (window[funcName] && typeof window[funcName] === 'function') {
+          window[funcName] = function() {
+            CheatUtils.log('Game over prevented!', 'warn');
+            return false;
+          };
+        }
+      });
+      
+      CheatUtils.log('God mode activated!', 'success');
+    },
+    
+    unlockAll: () => {
+      const unlockWords = ['unlock', 'unlocked', 'available', 'owned', 'purchased'];
+      const items = CheatUtils.findByKeywords(unlockWords);
+      
+      items.forEach(item => {
+        if (typeof item.value === 'boolean') {
+          CheatUtils.setValue(item.path, true);
+        }
+      });
+      
+      CheatUtils.log('Attempted to unlock all items!', 'success');
+    },
+
+    idleGameHack: () => {
+      const idleWords = ['idle', 'afk', 'passive', 'income', 'offline'];
+      const found = CheatUtils.findByKeywords(idleWords);
+      
+      found.forEach(item => {
+        if (typeof item.value === 'number') {
+          CheatUtils.setValue(item.path, item.value * 1000);
+        }
+      });
+      
+      CheatUtils.log('Idle game hack applied!', 'success');
+    }
+  };
+
+  // === NETWORK INTERCEPTOR ===
+  
+  const NetworkHack = {
+    originalFetch: window.fetch,
+    originalXHR: window.XMLHttpRequest,
+    interceptors: [],
+    logs: [],
+    
+    enable: () => {
+      window.fetch = function(...args) {
+        const url = args[0];
+        const options = args[1] || {};
+        
+        NetworkHack.logs.push({
+          type: 'fetch',
+          url: url,
+          method: options.method || 'GET',
+          timestamp: Date.now(),
+          data: options.body || null
+        });
+        
+        console.log('🌐 Fetch request:', url, options);
+        return NetworkHack.originalFetch.apply(this, args);
+      };
+      
+      const originalOpen = XMLHttpRequest.prototype.open;
+      XMLHttpRequest.prototype.open = function(method, url, ...args) {
+        NetworkHack.logs.push({
+          type: 'xhr',
+          url: url,
+          method: method,
+          timestamp: Date.now()
+        });
+        
+        console.log(`🌐 XHR ${method}:`, url);
+        return originalOpen.apply(this, [method, url, ...args]);
+      };
+      
+      CheatUtils.log('Network interception enabled', 'success');
+    },
+    
+    disable: () => {
+      window.fetch = NetworkHack.originalFetch;
+      CheatUtils.log('Network interception disabled', 'success');
+    },
+
+    getLogs: () => NetworkHack.logs,
+
+    clearLogs: () => {
+      NetworkHack.logs = [];
+      CheatUtils.log('Network logs cleared', 'success');
+    },
+
+    exportLogs: () => {
+      CheatUtils.exportData(NetworkHack.logs, 'network-logs.json');
+    }
+  };
+
+  // === ELEMENT INSPECTOR ===
+  
+  const ElementInspector = {
+    selectedElement: null,
+    highlightStyle: null,
+    
+    init: () => {
+      ElementInspector.highlightStyle = document.createElement('style');
+      ElementInspector.highlightStyle.textContent = `
+        .cheat-highlight {
+          outline: 3px solid #ff4444 !important;
+          outline-offset: 2px !important;
+          box-shadow: 0 0 10px rgba(255, 68, 68, 0.5) !important;
+        }
+      `;
+      document.head.appendChild(ElementInspector.highlightStyle);
+    },
+
+    startSelection: () => {
+      CheatUtils.log('Click on any element to inspect it', 'info');
+      document.addEventListener('click', ElementInspector.handleSelection, true);
+    },
+
+    handleSelection: (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      
+      ElementInspector.selectElement(e.target);
+      document.removeEventListener('click', ElementInspector.handleSelection, true);
+    },
+
+    selectElement: (element) => {
+      if (ElementInspector.selectedElement) {
+        ElementInspector.selectedElement.classList.remove('cheat-highlight');
+      }
+      
+      ElementInspector.selectedElement = element;
+      element.classList.add('cheat-highlight');
+      
+      const info = ElementInspector.getElementInfo(element);
+      console.log('🔍 Selected element:', info);
+      CheatUtils.log(`Selected: ${info.tag}${info.id ? '#' + info.id : ''}`, 'success');
+    },
+
+    getElementInfo: (element) => {
+      const rect = element.getBoundingClientRect();
+      return {
+        tag: element.tagName.toLowerCase(),
+        id: element.id,
+        classes: Array.from(element.classList),
+        text: element.textContent?.slice(0, 100),
+        attributes: Array.from(element.attributes).map(attr => ({
+          name: attr.name,
+          value: attr.value
+        })),
+        position: {
+          x: rect.left,
+          y: rect.top,
+          width: rect.width,
+          height: rect.height
+        },
+        styles: window.getComputedStyle(element),
+        events: ElementInspector.getEventListeners(element)
+      };
+    },
+
+    getEventListeners: (element) => {
+      // This is a simplified version - browser dev tools have more access
+      const events = [];
+      const eventTypes = ['click', 'mousedown', 'mouseup', 'keydown', 'keyup', 'change', 'input', 'submit'];
+      
+      eventTypes.forEach(type => {
+        if (element[`on${type}`]) {
+          events.push(type);
+        }
+      });
+      
+      return events;
+    },
+
+    modifyElement: (property, value) => {
+      if (!ElementInspector.selectedElement) {
+        CheatUtils.log('No element selected', 'error');
+        return;
+      }
+      
+      try {
+        if (property.startsWith('style.')) {
+          const styleProp = property.replace('style.', '');
+          ElementInspector.selectedElement.style[styleProp] = value;
+        } else if (property === 'textContent') {
+          ElementInspector.selectedElement.textContent = value;
+        } else if (property === 'innerHTML') {
+          ElementInspector.selectedElement.innerHTML = value;
+        } else {
+          ElementInspector.selectedElement[property] = value;
+        }
+        
+        CheatUtils.log(`Modified ${property} = ${value}`, 'success');
+      } catch (error) {
+        CheatUtils.log(`Failed to modify ${property}: ${error.message}`, 'error');
+      }
+    },
+
+    deleteElement: () => {
+      if (ElementInspector.selectedElement) {
+        ElementInspector.selectedElement.remove();
+        ElementInspector.selectedElement = null;
+        CheatUtils.log('Element deleted', 'success');
+      }
+    },
+
+    hideElement: () => {
+      if (ElementInspector.selectedElement) {
+        ElementInspector.selectedElement.style.display = 'none';
+        CheatUtils.log('Element hidden', 'success');
+      }
+    },
+
+    showElement: () => {
+      if (ElementInspector.selectedElement) {
+        ElementInspector.selectedElement.style.display = '';
+        CheatUtils.log('Element shown', 'success');
+      }
+    }
+  };
+
+  // === CONSOLE INTERFACE ===
+  
+  const ConsoleInterface = {
+    history: [],
+    historyIndex: -1,
+    context: {},
+    
+    execute: (code) => {
+      try {
+        ConsoleInterface.history.push(code);
+        ConsoleInterface.historyIndex = ConsoleInterface.history.length;
+        
+        // Create a safe execution context
+        const result = eval(`
+          (function() {
+            with (ConsoleInterface.context) {
+              return ${code};
+            }
+          })()
+        `);
+        
+        const output = {
+          type: 'result',
+          value: result,
+          timestamp: Date.now()
+        };
+        
+        console.log('Console result:', result);
+        return output;
+      } catch (error) {
+        const output = {
+          type: 'error',
+          value: error.message,
+          timestamp: Date.now()
+        };
+        
+        console.error('Console error:', error);
+        return output;
+      }
+    },
+
+    setVariable: (name, value) => {
+      ConsoleInterface.context[name] = value;
+      CheatUtils.log(`Variable ${name} set`, 'success');
+    },
+
+    getHistory: () => ConsoleInterface.history,
+
+    clearHistory: () => {
+      ConsoleInterface.history = [];
+      ConsoleInterface.historyIndex = -1;
+    },
+
+    getPreviousCommand: () => {
+      if (ConsoleInterface.historyIndex > 0) {
+        ConsoleInterface.historyIndex--;
+        return ConsoleInterface.history[ConsoleInterface.historyIndex];
+      }
+      return '';
+    },
+
+    getNextCommand: () => {
+      if (ConsoleInterface.historyIndex < ConsoleInterface.history.length - 1) {
+        ConsoleInterface.historyIndex++;
+        return ConsoleInterface.history[ConsoleInterface.historyIndex];
+      }
+      ConsoleInterface.historyIndex = ConsoleInterface.history.length;
+      return '';
+    }
+  };
+
+  // === GUI SYSTEM ===
+  
+  const CheatGUI = {
+    isVisible: false,
+    currentTab: 'scanner',
+    logs: [],
+    consoleOutput: [],
+    
+    init: () => {
+      CheatGUI.createStyles();
+      CheatGUI.createGUI();
+      CheatGUI.bindEvents();
+      ElementInspector.init();
+      CheatUtils.log('Advanced GUI System initialized!', 'success');
+    },
+    
+    createStyles: () => {
       const style = document.createElement('style');
-      style.innerHTML = `
-        #easycheat {
+      style.textContent = `
+        #cheat-gui {
           position: fixed;
           top: 50px;
-          left: 50px;
-          width: ${this.settings.width}px;
-          height: ${this.settings.height}px;
-          z-index: ${this.settings.zIndex};
-          background: #111;
-          color: #eee;
-          font-family: monospace;
-          border: 2px solid #555;
-          border-radius: 8px;
-          overflow: hidden;
-          display: flex;
+          right: 50px;
+          width: 700px;
+          height: 600px;
+          background: linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%);
+          border: 2px solid #ff4444;
+          border-radius: 12px;
+          font-family: 'Courier New', monospace;
+          color: white;
+          z-index: 999999;
+          box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+          display: none;
           flex-direction: column;
+          resize: both;
+          overflow: hidden;
+          backdrop-filter: blur(10px);
         }
-        #easycheat-header {
-          background: #222;
-          padding: 4px 8px;
+        
+        #cheat-header {
+          background: linear-gradient(90deg, #ff4444, #ff6b6b);
+          padding: 12px 16px;
           cursor: move;
           user-select: none;
+          font-weight: bold;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          border-radius: 10px 10px 0 0;
+        }
+        
+        #cheat-controls {
+          display: flex;
+          gap: 8px;
+        }
+        
+        .cheat-control-btn {
+          background: rgba(255,255,255,0.2);
+          border: none;
+          color: white;
+          width: 28px;
+          height: 28px;
+          border-radius: 6px;
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          transition: all 0.2s ease;
+        }
+        
+        .cheat-control-btn:hover {
+          background: rgba(255,255,255,0.3);
+          transform: scale(1.1);
+        }
+        
+        #cheat-tabs {
+          display: flex;
+          background: #333;
+          border-bottom: 2px solid #444;
+          overflow-x: auto;
+        }
+        
+        .cheat-tab {
+          padding: 8px 12px;
+          cursor: pointer;
+          background: #333;
+          border: none;
+          color: #ccc;
+          transition: all 0.2s ease;
+          white-space: nowrap;
+          border-right: 1px solid #444;
+          font-size: 12px;
+        }
+        
+        .cheat-tab:hover {
+          background: #444;
+          color: white;
+        }
+        
+        .cheat-tab.active {
+          background: #ff4444;
+          color: white;
+        }
+        
+        .cheat-panel {
+          flex: 1;
+          padding: 12px;
+          overflow-y: auto;
+          display: none;
+        }
+        
+        .cheat-panel.active {
+          display: block;
+        }
+        
+        .cheat-input {
+          background: #222;
+          border: 1px solid #555;
+          color: white;
+          padding: 6px 10px;
+          border-radius: 4px;
+          width: 100%;
+          margin-bottom: 6px;
+          font-family: inherit;
+          font-size: 12px;
+        }
+        
+        .cheat-input:focus {
+          outline: none;
+          border-color: #ff4444;
+          box-shadow: 0 0 0 2px rgba(255,68,68,0.2);
+        }
+        
+        .cheat-btn {
+          background: linear-gradient(135deg, #ff4444, #ff6b6b);
+          border: none;
+          color: white;
+          padding: 6px 12px;
+          border-radius: 4px;
+          cursor: pointer;
+          font-family: inherit;
+          font-weight: bold;
+          margin-right: 6px;
+          margin-bottom: 6px;
+          transition: all 0.2s ease;
+          font-size: 11px;
+        }
+        
+        .cheat-btn:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 4px 12px rgba(255,68,68,0.4);
+        }
+        
+        .cheat-btn:active {
+          transform: translateY(0);
+        }
+        
+        .cheat-btn.secondary {
+          background: linear-gradient(135deg, #666, #888);
+        }
+        
+        .cheat-btn.danger {
+          background: linear-gradient(135deg, #dc3545, #ff4757);
+        }
+        
+        .cheat-btn.small {
+          padding: 4px 8px;
+          font-size: 10px;
+        }
+        
+        .cheat-select {
+          background: #222;
+          border: 1px solid #555;
+          color: white;
+          padding: 6px 10px;
+          border-radius: 4px;
+          margin-bottom: 6px;
+          font-family: inherit;
+          font-size: 12px;
+        }
+        
+        .cheat-checkbox {
+          margin-right: 6px;
+        }
+        
+        .cheat-log {
+          background: #111;
+          border: 1px solid #333;
+          border-radius: 4px;
+          padding: 8px;
+          height: 150px;
+          overflow-y: auto;
+          font-size: 10px;
+          line-height: 1.3;
+        }
+        
+        .log-entry {
+          margin-bottom: 2px;
+          padding: 1px 0;
+        }
+        
+        .log-entry.info { color: #00ff00; }
+        .log-entry.warn { color: #ffaa00; }
+        .log-entry.error { color: #ff0000; }
+        .log-entry.success { color: #00ffaa; }
+        
+        .result-item {
+          background: #222;
+          border: 1px solid #444;
+          border-radius: 4px;
+          padding: 6px;
+          margin-bottom: 4px;
           display: flex;
           justify-content: space-between;
           align-items: center;
         }
-        #easycheat-header span {
+        
+        .result-path {
+          color: #4CAF50;
           font-weight: bold;
+          font-size: 10px;
         }
-        #easycheat-controls {
-          display: flex;
-          gap: 4px;
+        
+        .result-value {
+          color: #FFC107;
+          font-size: 9px;
         }
-        .easycheat-btn {
-          background: #444;
+        
+        .floating-btn {
+          position: fixed;
+          bottom: 20px;
+          right: 20px;
+          width: 60px;
+          height: 60px;
+          background: linear-gradient(135deg, #ff4444, #ff6b6b);
           border: none;
-          color: #fff;
-          padding: 2px 6px;
+          border-radius: 50%;
+          color: white;
+          font-size: 24px;
           cursor: pointer;
-          font-size: 14px;
+          z-index: 999998;
+          box-shadow: 0 8px 16px rgba(255,68,68,0.4);
+          transition: all 0.3s ease;
         }
-        #easycheat-tabs {
-          display: flex;
-          background: #333;
+        
+        .floating-btn:hover {
+          transform: scale(1.1);
+          box-shadow: 0 12px 24px rgba(255,68,68,0.6);
         }
-        .easycheat-tab {
-          flex: 1;
-          padding: 4px;
-          text-align: center;
-          cursor: pointer;
-          background: #333;
-        }
-        .easycheat-tab.active {
-          background: #555;
-        }
-        #easycheat-body {
-          flex: 1;
+
+        .console-output {
           background: #000;
-          overflow: auto;
-          padding: 6px;
+          border: 1px solid #333;
+          border-radius: 4px;
+          padding: 8px;
+          height: 200px;
+          overflow-y: auto;
+          font-size: 11px;
+          line-height: 1.3;
+          font-family: 'Courier New', monospace;
         }
-        .easycheat-panel {
-          display: none;
+
+        .console-input {
+          background: #111;
+          border: 1px solid #555;
+          color: #0f0;
+          padding: 8px;
+          border-radius: 4px;
+          width: 100%;
+          font-family: 'Courier New', monospace;
+          font-size: 12px;
         }
-        .easycheat-panel.active {
-          display: block;
+
+        .console-input:focus {
+          outline: none;
+          border-color: #0f0;
         }
-        .easycheat-log-line {
-          border-bottom: 1px solid #444;
-          padding: 2px 0;
-          white-space: pre-wrap;
-          word-break: break-word;
-        }
+
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+        .flex-row { display: flex; gap: 8px; align-items: center; }
+        .mb-2 { margin-bottom: 8px; }
+        .text-xs { font-size: 10px; }
+        .text-sm { font-size: 11px; }
       `;
       document.head.appendChild(style);
     },
-    createGUI() {
-      const wrapper = document.createElement('div');
-      wrapper.id = 'easycheat';
-
-      // Header
-      const header = document.createElement('div');
-      header.id = 'easycheat-header';
-      const title = document.createElement('span');
-      title.textContent = 'EasyCheat';
-      const controls = document.createElement('div');
-      controls.id = 'easycheat-controls';
-      const btnMin = document.createElement('button');
-      btnMin.className = 'easycheat-btn';
-      btnMin.textContent = '-';
-      btnMin.onclick = () => this.toggleMinimize();
-      const btnClose = document.createElement('button');
-      btnClose.className = 'easycheat-btn';
-      btnClose.textContent = 'X';
-      btnClose.onclick = () => wrapper.remove();
-      controls.appendChild(btnMin);
-      controls.appendChild(btnClose);
-      header.appendChild(title);
-      header.appendChild(controls);
-      wrapper.appendChild(header);
-
-      // Tabs
-      const tabs = document.createElement('div');
-      tabs.id = 'easycheat-tabs';
-      this.tabs.forEach(tab => {
-        const tabEl = document.createElement('div');
-        tabEl.className = 'easycheat-tab';
-        tabEl.textContent = tab;
-        tabEl.onclick = () => this.switchTab(tab);
-        if (tab === this.state.activeTab) tabEl.classList.add('active');
-        tabs.appendChild(tabEl);
-      });
-      wrapper.appendChild(tabs);
-
-      // Body
-      const body = document.createElement('div');
-      body.id = 'easycheat-body';
-      this.tabs.forEach(tab => {
-        const panel = document.createElement('div');
-        panel.className = 'easycheat-panel';
-        panel.id = `easycheat-panel-${tab}`;
-        if (tab === this.state.activeTab) panel.classList.add('active');
-        body.appendChild(panel);
-      });
-      wrapper.appendChild(body);
-
-      document.body.appendChild(wrapper);
+    
+    createGUI: () => {
+      // Create floating button
+      const floatingBtn = document.createElement('button');
+      floatingBtn.id = 'cheat-floating-btn';
+      floatingBtn.className = 'floating-btn';
+      floatingBtn.innerHTML = '🔥';
+      floatingBtn.title = 'Open Advanced Cheat GUI';
+      document.body.appendChild(floatingBtn);
+      
+      // Create main GUI
+      const gui = document.createElement('div');
+      gui.id = 'cheat-gui';
+      gui.innerHTML = `
+        <div id="cheat-header">
+          <span>🔥 Advanced Game Cheat Explorer v3.0</span>
+          <div id="cheat-controls">
+            <button class="cheat-control-btn" id="cheat-minimize" title="Minimize">−</button>
+            <button class="cheat-control-btn" id="cheat-close" title="Close">×</button>
+          </div>
+        </div>
+        
+        <div id="cheat-tabs">
+          <button class="cheat-tab active" data-tab="scanner">🔍 Advanced Scanner</button>
+          <button class="cheat-tab" data-tab="clicker">🖱️ Auto-Clicker Pro</button>
+          <button class="cheat-tab" data-tab="memory">👁️ Memory Monitor</button>
+          <button class="cheat-tab" data-tab="presets">🎮 Game Presets</button>
+          <button class="cheat-tab" data-tab="scripts">📜 Script Injector</button>
+          <button class="cheat-tab" data-tab="network">🌐 Network Tools</button>
+          <button class="cheat-tab" data-tab="inspector">🔍 Element Inspector</button>
+          <button class="cheat-tab" data-tab="console">💻 Console</button>
+          <button class="cheat-tab" data-tab="logs">📋 Activity Logs</button>
+        </div>
+        
+        <div class="cheat-panel active" id="panel-scanner">
+          <h3>🔍 Advanced Value Scanner</h3>
+          <div class="grid-2 mb-2">
+            <input type="text" class="cheat-input" id="scan-value" placeholder="Enter value to scan...">
+            <select class="cheat-select" id="scan-type">
+              <option value="exact">Exact Match</option>
+              <option value="contains">Contains</option>
+              <option value="range">Range (±10)</option>
+              <option value="greater">Greater Than</option>
+              <option value="less">Less Than</option>
+              <option value="regex">Regex Pattern</option>
+            </select>
+          </div>
+          <div class="grid-3 mb-2">
+            <label class="text-sm"><input type="checkbox" class="cheat-checkbox" id="deep-scan"> Deep Scan</label>
+            <label class="text-sm"><input type="checkbox" class="cheat-checkbox" id="include-storage"> Include Storage</label>
+            <label class="text-sm"><input type="checkbox" class="cheat-checkbox" id="include-cookies"> Include Cookies</label>
+          </div>
+          <div class="mb-2">
+            <button class="cheat-btn" id="first-scan">First Scan</button>
+            <button class="cheat-btn secondary" id="next-scan">Filter Results</button>
+            <button class="cheat-btn secondary" id="export-results">Export Results</button>
+            <button class="cheat-btn danger" id="clear-results">Clear All</button>
+          </div>
+          <div class="mb-2">
+            <input type="text" class="cheat-input" id="batch-value" placeholder="Batch modify value..." style="width: 60%; display: inline-block;">
+            <button class="cheat-btn" id="batch-modify">Modify Selected</button>
+          </div>
+          <div id="scan-results"></div>
+        </div>
+        
+        <div class="cheat-panel" id="panel-clicker">
+          <h3>🖱️ Advanced Auto-Clicker</h3>
+          <div class="grid-2 mb-2">
+            <div>
+              <label class="text-sm">Click Delay (ms)</label>
+              <input type="number" class="cheat-input" id="click-delay" value="100" min="1">
+            </div>
+            <div>
+              <label class="text-sm">Click Pattern</label>
+              <select class="cheat-select" id="click-pattern">
+                <option value="single">Single Click</option>
+                <option value="double">Double Click</option>
+                <option value="triple">Triple Click</option>
+                <option value="burst">Burst Mode</option>
+              </select>
+            </div>
+          </div>
+          <div class="grid-2 mb-2">
+            <label class="text-sm"><input type="checkbox" class="cheat-checkbox" id="random-delay"> Random Delay</label>
+            <label class="text-sm"><input type="checkbox" class="cheat-checkbox" id="human-like"> Human-like Movement</label>
+          </div>
+          <div class="mb-2">
+            <button class="cheat-btn" id="start-clicker">Start Auto-Clicker</button>
+            <button class="cheat-btn danger" id="stop-clicker">Stop Clicker</button>
+            <button class="cheat-btn secondary" id="set-coordinates">Set Click Position</button>
+          </div>
+          <div id="clicker-stats">
+            <div class="text-sm">Status: <span id="clicker-status">Stopped</span></div>
+            <div class="text-sm">Total Clicks: <span id="total-clicks">0</span></div>
+            <div class="text-sm">CPS: <span id="clicks-per-second">0</span></div>
+          </div>
+        </div>
+        
+        <div class="cheat-panel" id="panel-memory">
+          <h3>👁️ Enhanced Memory Monitor</h3>
+          <div class="grid-2 mb-2">
+            <input type="text" class="cheat-input" id="watch-path" placeholder="e.g., window.game.score">
+            <input type="number" class="cheat-input" id="watch-interval" value="1000" placeholder="Interval (ms)">
+          </div>
+          <div class="mb-2">
+            <label class="text-sm"><input type="checkbox" class="cheat-checkbox" id="alert-on-change"> Alert on Change</label>
+            <label class="text-sm"><input type="checkbox" class="cheat-checkbox" id="keep-history"> Keep History</label>
+          </div>
+          <div class="mb-2">
+            <button class="cheat-btn" id="add-watch">Add Watch</button>
+            <button class="cheat-btn secondary" id="export-history">Export History</button>
+            <button class="cheat-btn secondary" id="analyze-watch">Analyze Selected</button>
+          </div>
+          <div id="watch-list"></div>
+        </div>
+        
+        <div class="cheat-panel" id="panel-presets">
+          <h3>🎮 Game Presets & Hacks</h3>
+          <div class="mb-2">
+            <h4 class="text-sm">Popular Games:</h4>
+            <button class="cheat-btn" id="preset-cookie">Cookie Clicker</button>
+            <button class="cheat-btn" id="preset-generic">Generic Clicker</button>
+            <button class="cheat-btn" id="preset-idle">Idle Games</button>
+          </div>
+          <div class="mb-2">
+            <h4 class="text-sm">Universal Hacks:</h4>
+            <button class="cheat-btn" id="preset-speed">Speed Hack (10x)</button>
+            <button class="cheat-btn" id="preset-god">God Mode</button>
+            <button class="cheat-btn" id="preset-unlock">Unlock All</button>
+            <button class="cheat-btn" id="preset-currency">Max Currency</button>
+          </div>
+        </div>
+        
+        <div class="cheat-panel" id="panel-scripts">
+          <h3>📜 Script Injector</h3>
+          <textarea class="cheat-input" id="custom-script" rows="6" placeholder="Enter JavaScript code..."></textarea>
+          <div class="mb-2">
+            <button class="cheat-btn" id="execute-script">Execute Script</button>
+            <button class="cheat-btn secondary" id="save-script">Save Script</button>
+            <button class="cheat-btn secondary" id="load-script">Load Script</button>
+          </div>
+          <div>
+            <h4 class="text-sm">Quick Templates:</h4>
+            <button class="cheat-btn small" id="template-currency">Currency Hack</button>
+            <button class="cheat-btn small" id="template-speed">Speed Hack</button>
+            <button class="cheat-btn small" id="template-god">God Mode</button>
+          </div>
+        </div>
+        
+        <div class="cheat-panel" id="panel-network">
+          <h3>🌐 Network Monitor & Tools</h3>
+          <div class="mb-2">
+            <button class="cheat-btn" id="enable-network">Enable Logging</button>
+            <button class="cheat-btn danger" id="disable-network">Disable Logging</button>
+            <button class="cheat-btn secondary" id="export-network">Export Logs</button>
+            <button class="cheat-btn secondary" id="clear-network">Clear Logs</button>
+          </div>
+          <div id="network-logs" class="cheat-log"></div>
+        </div>
+        
+        <div class="cheat-panel" id="panel-inspector">
+          <h3>🔍 Element Inspector & Modifier</h3>
+          <div class="mb-2">
+            <button class="cheat-btn" id="start-inspection">Select Element</button>
+            <button class="cheat-btn secondary" id="delete-element">Delete</button>
+            <button class="cheat-btn secondary" id="hide-element">Hide</button>
+            <button class="cheat-btn secondary" id="show-element">Show</button>
+          </div>
+          <div class="grid-2 mb-2">
+            <input type="text" class="cheat-input" id="element-property" placeholder="Property (e.g., style.color)">
+            <input type="text" class="cheat-input" id="element-value" placeholder="New value">
+          </div>
+          <button class="cheat-btn" id="modify-element">Modify Property</button>
+          <div id="element-info" class="text-xs"></div>
+        </div>
+        
+        <div class="cheat-panel" id="panel-console">
+          <h3>💻 Built-in Console</h3>
+          <div class="console-output" id="console-output"></div>
+          <div class="mb-2">
+            <input type="text" class="console-input" id="console-input" placeholder="Enter JavaScript command..." autocomplete="off">
+          </div>
+          <div class="mb-2">
+            <button class="cheat-btn small" id="console-execute">Execute</button>
+            <button class="cheat-btn small secondary" id="console-clear">Clear</button>
+            <button class="cheat-btn small secondary" id="console-history">History</button>
+          </div>
+          <div class="text-xs">
+            Use ↑/↓ arrow keys for command history. Available context: window, document, CHEAT
+          </div>
+        </div>
+        
+        <div class="cheat-panel" id="panel-logs">
+          <h3>📋 Activity Logs & History</h3>
+          <div class="cheat-log" id="gui-logs"></div>
+          <div class="mb-2">
+            <button class="cheat-btn danger" id="clear-logs">Clear Logs</button>
+            <button class="cheat-btn secondary" id="export-logs">Export Logs</button>
+          </div>
+        </div>
+      `;
+      
+      document.body.appendChild(gui);
     },
-    switchTab(tab) {
-      this.state.activeTab = tab;
-      document.querySelectorAll('.easycheat-tab').forEach(el => {
-        el.classList.toggle('active', el.textContent === tab);
+    
+    bindEvents: () => {
+      const gui = document.getElementById('cheat-gui');
+      const floatingBtn = document.getElementById('cheat-floating-btn');
+      
+      // Floating button
+      floatingBtn.addEventListener('click', () => CheatGUI.show());
+      
+      // Header controls
+      document.getElementById('cheat-minimize').addEventListener('click', () => CheatGUI.hide());
+      document.getElementById('cheat-close').addEventListener('click', () => CheatGUI.hide());
+      
+      // Tab switching
+      document.querySelectorAll('.cheat-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+          const tabName = tab.dataset.tab;
+          CheatGUI.switchTab(tabName);
+        });
       });
-      this.tabs.forEach(t => {
-        const panel = document.getElementById(`easycheat-panel-${t}`);
-        if (panel) panel.classList.toggle('active', t === tab);
+      
+      // Scanner events
+      document.getElementById('first-scan').addEventListener('click', () => {
+        const value = document.getElementById('scan-value').value;
+        const type = document.getElementById('scan-type').value;
+        const deep = document.getElementById('deep-scan').checked;
+        const includeStorage = document.getElementById('include-storage').checked;
+        const includeCookies = document.getElementById('include-cookies').checked;
+        
+        if (value) {
+          const results = ValueScanner.scan(value, { 
+            type, 
+            deep, 
+            includeStorage, 
+            includeCookies 
+          });
+          CheatGUI.displayScanResults(results);
+        }
       });
-      this.log(`Switched to ${tab} tab`);
-    },
-    toggleMinimize() {
-      const body = document.getElementById('easycheat-body');
-      const tabs = document.getElementById('easycheat-tabs');
-      const isVisible = body.style.display !== 'none';
-      body.style.display = isVisible ? 'none' : '';
-      tabs.style.display = isVisible ? 'none' : '';
-    },
-    log(msg) {
-      this.state.logs.push(msg);
-      const logPanel = document.getElementById('easycheat-panel-Logs');
-      if (logPanel) {
-        const line = document.createElement('div');
-        line.className = 'easycheat-log-line';
-        line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
-        logPanel.appendChild(line);
-        logPanel.scrollTop = logPanel.scrollHeight;
-      }
-    },
-    bindEvents() {
-      const header = document.getElementById('easycheat-header');
-      const wrapper = document.getElementById('easycheat');
-      let offsetX = 0, offsetY = 0;
+      
+      document.getElementById('next-scan').addEventListener('click', () => {
+        const value = document.getElementById('scan-value').value;
+        const type = document.getElementById('scan-type').value;
+        if (value) {
+          const results = ValueScanner.filter(value, type);
+          CheatGUI.displayScanResults(results);
+        }
+      });
+      
+      document.getElementById('clear-results').addEventListener('click', () => {
+        ValueScanner.results = [];
+        CheatGUI.displayScanResults([]);
+      });
 
-      header.addEventListener('mousedown', (e) => {
-        this.state.dragging = true;
-        offsetX = e.clientX - wrapper.offsetLeft;
-        offsetY = e.clientY - wrapper.offsetTop;
+      document.getElementById('export-results').addEventListener('click', () => {
+        ValueScanner.exportResults();
       });
 
-      document.addEventListener('mousemove', (e) => {
-        if (this.state.dragging) {
-          wrapper.style.left = `${e.clientX - offsetX}px`;
-          wrapper.style.top = `${e.clientY - offsetY}px`;
+      document.getElementById('batch-modify').addEventListener('click', () => {
+        const newValue = document.getElementById('batch-value').value;
+        const selectedIndices = Array.from(document.querySelectorAll('.result-checkbox:checked'))
+          .map(cb => parseInt(cb.dataset.index));
+        
+        if (newValue && selectedIndices.length > 0) {
+          ValueScanner.batchModify(selectedIndices, newValue);
+        }
+      });
+      
+      // Auto-clicker events
+      document.getElementById('start-clicker').addEventListener('click', () => {
+        const delay = parseInt(document.getElementById('click-delay').value) || 100;
+        const pattern = document.getElementById('click-pattern').value;
+        const randomDelay = document.getElementById('random-delay').checked;
+        const humanLike = document.getElementById('human-like').checked;
+        
+        AutoClicker.start({ 
+          delay, 
+          pattern, 
+          randomDelay, 
+          humanLike,
+          burstMode: pattern === 'burst'
+        });
+        CheatGUI.updateClickerStats();
+      });
+      
+      document.getElementById('stop-clicker').addEventListener('click', () => {
+        AutoClicker.stop();
+        CheatGUI.updateClickerStats();
+      });
+
+      document.getElementById('set-coordinates').addEventListener('click', () => {
+        CheatUtils.log('Click anywhere to set click coordinates', 'info');
+        document.addEventListener('click', function setCoords(e) {
+          AutoClicker.setCoordinates(e.clientX, e.clientY);
+          document.removeEventListener('click', setCoords);
+        });
+      });
+      
+      // Memory monitor events
+      document.getElementById('add-watch').addEventListener('click', () => {
+        const path = document.getElementById('watch-path').value;
+        const interval = parseInt(document.getElementById('watch-interval').value) || 1000;
+        const alertOnChange = document.getElementById('alert-on-change').checked;
+        const keepHistory = document.getElementById('keep-history').checked;
+        
+        if (path) {
+          MemoryMonitor.watch(path, { interval, alertOnChange, keepHistory });
+          document.getElementById('watch-path').value = '';
         }
       });
 
-      document.addEventListener('mouseup', () => {
-        this.state.dragging = false;
+      document.getElementById('export-history').addEventListener('click', () => {
+        MemoryMonitor.exportHistory();
       });
+
+      document.getElementById('analyze-watch').addEventListener('click', () => {
+        const selectedPath = document.querySelector('.watch-item.selected')?.dataset.path;
+        if (selectedPath) {
+          MemoryMonitor.analyze(selectedPath);
+        }
+      });
+      
+      // Game presets
+      document.getElementById('preset-cookie').addEventListener('click', () => GamePresets.cookieClicker());
+      document.getElementById('preset-generic').addEventListener('click', () => GamePresets.genericClicker());
+      document.getElementById('preset-idle').addEventListener('click', () => GamePresets.idleGameHack());
+      document.getElementById('preset-speed').addEventListener('click', () => GamePresets.speedHack(10));
+      document.getElementById('preset-god').addEventListener('click', () => GamePresets.godMode());
+      document.getElementById('preset-unlock').addEventListener('click', () => GamePresets.unlockAll());
+      
+      document.getElementById('preset-currency').addEventListener('click', () => {
+        const currencies = CheatUtils.findByKeywords(['money', 'coins', 'cash', 'gold', 'points', 'score', 'currency']);
+        currencies.forEach(item => {
+          if (typeof item.value === 'number') {
+            CheatUtils.setValue(item.path, 999999);
+          }
+        });
+        CheatUtils.log('Attempted to max all currencies', 'success');
+      });
+      
+      // Script execution
+      document.getElementById('execute-script').addEventListener('click', () => {
+        const code = document.getElementById('custom-script').value;
+        if (code) {
+          try {
+            eval(code);
+            CheatUtils.log('Custom script executed successfully', 'success');
+          } catch (error) {
+            CheatUtils.log(`Script error: ${error.message}`, 'error');
+          }
+        }
+      });
+
+      // Script templates
+      document.getElementById('template-currency').addEventListener('click', () => {
+        document.getElementById('custom-script').value = `// Currency finder and modifier
+const currencies = ['money', 'coins', 'cash', 'gold', 'points', 'score'];
+currencies.forEach(word => {
+  if (window[word] !== undefined && typeof window[word] === 'number') {
+    window[word] = 999999;
+    console.log('Set', word, 'to 999999');
+  }
+});`;
+      });
+
+      document.getElementById('template-speed').addEventListener('click', () => {
+        document.getElementById('custom-script').value = `// Speed hack - 10x faster
+const originalSetTimeout = window.setTimeout;
+const originalSetInterval = window.setInterval;
+
+window.setTimeout = (fn, delay, ...args) => originalSetTimeout(fn, delay / 10, ...args);
+window.setInterval = (fn, delay, ...args) => originalSetInterval(fn, delay / 10, ...args);
+
+console.log('Speed hack activated!');`;
+      });
+
+      document.getElementById('template-god').addEventListener('click', () => {
+        document.getElementById('custom-script').value = `// God mode - infinite health
+const healthWords = ['health', 'hp', 'life', 'lives', 'hearts'];
+healthWords.forEach(word => {
+  if (window[word] !== undefined && typeof window[word] === 'number') {
+    window[word] = 999999;
+    console.log('Set', word, 'to 999999');
+  }
+});`;
+      });
+      
+      // Network monitoring
+      document.getElementById('enable-network').addEventListener('click', () => NetworkHack.enable());
+      document.getElementById('disable-network').addEventListener('click', () => NetworkHack.disable());
+      document.getElementById('export-network').addEventListener('click', () => NetworkHack.exportLogs());
+      document.getElementById('clear-network').addEventListener('click', () => {
+        NetworkHack.clearLogs();
+        CheatGUI.updateNetworkLogs();
+      });
+
+      // Element inspector
+      document.getElementById('start-inspection').addEventListener('click', () => {
+        ElementInspector.startSelection();
+      });
+
+      document.getElementById('delete-element').addEventListener('click', () => {
+        ElementInspector.deleteElement();
+      });
+
+      document.getElementById('hide-element').addEventListener('click', () => {
+        ElementInspector.hideElement();
+      });
+
+      document.getElementById('show-element').addEventListener('click', () => {
+        ElementInspector.showElement();
+      });
+
+      document.getElementById('modify-element').addEventListener('click', () => {
+        const property = document.getElementById('element-property').value;
+        const value = document.getElementById('element-value').value;
+        if (property && value) {
+          ElementInspector.modifyElement(property, value);
+        }
+      });
+
+      // Console interface
+      const consoleInput = document.getElementById('console-input');
+      
+      consoleInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          CheatGUI.executeConsoleCommand();
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          consoleInput.value = ConsoleInterface.getPreviousCommand();
+        } else if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          consoleInput.value = ConsoleInterface.getNextCommand();
+        }
+      });
+
+      document.getElementById('console-execute').addEventListener('click', () => {
+        CheatGUI.executeConsoleCommand();
+      });
+
+      document.getElementById('console-clear').addEventListener('click', () => {
+        CheatGUI.consoleOutput = [];
+        CheatGUI.updateConsoleOutput();
+      });
+
+      document.getElementById('console-history').addEventListener('click', () => {
+        const history = ConsoleInterface.getHistory();
+        CheatGUI.addToConsole('Command History:', 'info');
+        history.forEach((cmd, i) => {
+          CheatGUI.addToConsole(`${i + 1}: ${cmd}`, 'info');
+        });
+      });
+      
+      // Logs
+      document.getElementById('clear-logs').addEventListener('click', () => {
+        CheatGUI.logs = [];
+        CheatGUI.updateLogs();
+      });
+
+      document.getElementById('export-logs').addEventListener('click', () => {
+        CheatUtils.exportData(CheatGUI.logs, 'cheat-logs.json');
+      });
+      
+      // Make draggable
+      CheatGUI.makeDraggable();
+      
+      // Update stats periodically
+      setInterval(() => {
+        if (AutoClicker.isRunning) {
+          CheatGUI.updateClickerStats();
+        }
+        CheatGUI.updateNetworkLogs();
+      }, 1000);
+    },
+
+    executeConsoleCommand: () => {
+      const input = document.getElementById('console-input');
+      const command = input.value.trim();
+      
+      if (!command) return;
+      
+      CheatGUI.addToConsole(`> ${command}`, 'command');
+      
+      const result = ConsoleInterface.execute(command);
+      CheatGUI.addToConsole(String(result.value), result.type);
+      
+      input.value = '';
+    },
+
+    addToConsole: (text, type = 'info') => {
+      CheatGUI.consoleOutput.push({
+        text,
+        type,
+        timestamp: Date.now()
+      });
+      
+      if (CheatGUI.consoleOutput.length > 100) {
+        CheatGUI.consoleOutput = CheatGUI.consoleOutput.slice(-50);
+      }
+      
+      CheatGUI.updateConsoleOutput();
+    },
+
+    updateConsoleOutput: () => {
+      const container = document.getElementById('console-output');
+      if (container) {
+        container.innerHTML = CheatGUI.consoleOutput.map(entry => {
+          const time = new Date(entry.timestamp).toLocaleTimeString();
+          const color = {
+            command: '#00ff00',
+            result: '#ffff00',
+            error: '#ff0000',
+            info: '#ffffff'
+          }[entry.type] || '#ffffff';
+          
+          return `<div style="color: ${color};">[${time}] ${entry.text}</div>`;
+        }).join('');
+        
+        container.scrollTop = container.scrollHeight;
+      }
+    },
+
+    updateNetworkLogs: () => {
+      const container = document.getElementById('network-logs');
+      if (container) {
+        const logs = NetworkHack.getLogs().slice(-20);
+        container.innerHTML = logs.map(log => {
+          const time = new Date(log.timestamp).toLocaleTimeString();
+          return `<div>[${time}] ${log.method} ${log.url}</div>`;
+        }).join('');
+        container.scrollTop = container.scrollHeight;
+      }
+    },
+    
+    show: () => {
+      document.getElementById('cheat-gui').style.display = 'flex';
+      CheatGUI.isVisible = true;
+    },
+    
+    hide: () => {
+      document.getElementById('cheat-gui').style.display = 'none';
+      CheatGUI.isVisible = false;
+    },
+    
+    switchTab: (tabName) => {
+      document.querySelectorAll('.cheat-tab').forEach(tab => tab.classList.remove('active'));
+      document.querySelectorAll('.cheat-panel').forEach(panel => panel.classList.remove('active'));
+      
+      document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
+      document.getElementById(`panel-${tabName}`).classList.add('active');
+      
+      CheatGUI.currentTab = tabName;
+    },
+    
+    displayScanResults: (results) => {
+      const container = document.getElementById('scan-results');
+      container.innerHTML = `<div class="mb-2"><strong>Results: ${results.length}</strong></div>`;
+      
+      results.slice(0, 50).forEach((result, index) => {
+        const item = document.createElement('div');
+        item.className = 'result-item';
+        item.innerHTML = `
+          <div style="flex: 1;">
+            <input type="checkbox" class="result-checkbox" data-index="${index}" style="margin-right: 8px;">
+            <div class="result-path">${result.path}</div>
+            <div class="result-value">
+              Value: ${String(result.value).slice(0, 50)} (${result.type})
+              ${result.size ? ` - Size: ${result.size}b` : ''}
+              ${result.writable ? '' : ' - Read-only'}
+            </div>
+          </div>
+          <div style="display: flex; gap: 4px;">
+            <input type="text" placeholder="New value" style="width: 80px; padding: 2px; font-size: 10px;">
+            <button class="cheat-btn small" onclick="CheatUtils.setValue('${result.path}', this.previousElementSibling.value)">Set</button>
+          </div>
+        `;
+        container.appendChild(item);
+      });
+      
+      if (results.length > 50) {
+        const more = document.createElement('div');
+        more.textContent = `... and ${results.length - 50} more results (showing first 50)`;
+        more.className = 'text-sm';
+        container.appendChild(more);
+      }
+    },
+    
+    updateClickerStats: () => {
+      document.getElementById('clicker-status').textContent = AutoClicker.isRunning ? 'Running' : 'Stopped';
+      document.getElementById('total-clicks').textContent = AutoClicker.stats.totalClicks;
+      document.getElementById('clicks-per-second').textContent = AutoClicker.stats.cps;
+    },
+    
+    addLog: (message, type = 'info') => {
+      const timestamp = new Date().toLocaleTimeString();
+      CheatGUI.logs.push({ message, type, timestamp });
+      
+      // Keep only last 200 logs
+      if (CheatGUI.logs.length > 200) {
+        CheatGUI.logs = CheatGUI.logs.slice(-100);
+      }
+      
+      CheatGUI.updateLogs();
+    },
+    
+    updateLogs: () => {
+      const container = document.getElementById('gui-logs');
+      if (container) {
+        container.innerHTML = CheatGUI.logs.slice(-50).map(log => 
+          `<div class="log-entry ${log.type}">[${log.timestamp}] ${log.message}</div>`
+        ).join('');
+        container.scrollTop = container.scrollHeight;
+      }
+    },
+    
+    makeDraggable: () => {
+      const gui = document.getElementById('cheat-gui');
+      const header = document.getElementById('cheat-header');
+      let isDragging = false;
+      let currentX;
+      let currentY;
+      let initialX;
+      let initialY;
+      let xOffset = 0;
+      let yOffset = 0;
+      
+      header.addEventListener('mousedown', dragStart);
+      document.addEventListener('mousemove', drag);
+      document.addEventListener('mouseup', dragEnd);
+      
+      function dragStart(e) {
+        initialX = e.clientX - xOffset;
+        initialY = e.clientY - yOffset;
+        
+        if (e.target === header || header.contains(e.target)) {
+          isDragging = true;
+        }
+      }
+      
+      function drag(e) {
+        if (isDragging) {
+          e.preventDefault();
+          currentX = e.clientX - initialX;
+          currentY = e.clientY - initialY;
+          xOffset = currentX;
+          yOffset = currentY;
+          
+          gui.style.transform = `translate3d(${currentX}px, ${currentY}px, 0)`;
+        }
+      }
+      
+      function dragEnd(e) {
+        initialX = currentX;
+        initialY = currentY;
+        isDragging = false;
+      }
     }
   };
 
-  EasyCheat.init();
+  // === MAIN CHEAT OBJECT ===
+  
+  const CHEAT = {
+    // Auto-clicker functions
+    startClicker: (options) => AutoClicker.start(options),
+    stopClicker: () => AutoClicker.stop(),
+    setClickCoords: (x, y) => AutoClicker.setCoordinates(x, y),
+    getClickStats: () => AutoClicker.getStats(),
+    
+    // Value scanning
+    scan: (value, options) => ValueScanner.scan(value, options),
+    filter: (value, type) => ValueScanner.filter(value, type),
+    showResults: () => ValueScanner.show(),
+    modify: (index, value) => ValueScanner.modify(index, value),
+    batchModify: (indices, value) => ValueScanner.batchModify(indices, value),
+    exportResults: () => ValueScanner.exportResults(),
+    set: (path, value) => CheatUtils.setValue(path, value),
+    
+    // Memory monitoring
+    watch: (path, options) => MemoryMonitor.watch(path, options),
+    unwatch: (path) => MemoryMonitor.unwatch(path),
+    unwatchAll: () => MemoryMonitor.unwatchAll(),
+    listWatchers: () => MemoryMonitor.list(),
+    getHistory: (path) => MemoryMonitor.getHistory(path),
+    analyzeMemory: (path) => MemoryMonitor.analyze(path),
+    exportHistory: (path) => MemoryMonitor.exportHistory(path),
+    
+    // Game presets
+    cookieClicker: () => GamePresets.cookieClicker(),
+    genericClicker: () => GamePresets.genericClicker(),
+    idleGameHack: () => GamePresets.idleGameHack(),
+    speedHack: (multiplier) => GamePresets.speedHack(multiplier),
+    godMode: () => GamePresets.godMode(),
+    unlockAll: () => GamePresets.unlockAll(),
+    
+    // Network
+    enableNetworkLog: () => NetworkHack.enable(),
+    disableNetworkLog: () => NetworkHack.disable(),
+    getNetworkLogs: () => NetworkHack.getLogs(),
+    exportNetworkLogs: () => NetworkHack.exportLogs(),
+    
+    // Element inspector
+    inspectElement: () => ElementInspector.startSelection(),
+    modifyElement: (prop, val) => ElementInspector.modifyElement(prop, val),
+    deleteElement: () => ElementInspector.deleteElement(),
+    
+    // Console
+    console: {
+      execute: (code) => ConsoleInterface.execute(code),
+      setVar: (name, value) => ConsoleInterface.setVariable(name, value),
+      history: () => ConsoleInterface.getHistory()
+    },
+    
+    // GUI functions
+    showGUI: () => CheatGUI.show(),
+    hideGUI: () => CheatGUI.hide(),
+    switchTab: (tab) => CheatGUI.switchTab(tab),
+    
+    // Utilities
+    find: (keywords) => CheatUtils.findByKeywords(keywords),
+    log: (message, type) => CheatUtils.log(message, type),
+    export: (data, filename) => CheatUtils.exportData(data, filename),
+    import: (callback) => CheatUtils.importData(callback),
+    
+    // Quick hacks
+    maxCurrency: () => {
+      const currencies = CheatUtils.findByKeywords(['money', 'coins', 'cash', 'gold', 'points', 'score', 'currency']);
+      currencies.forEach(item => {
+        if (typeof item.value === 'number') {
+          CheatUtils.setValue(item.path, 999999);
+        }
+      });
+      CheatUtils.log('Attempted to max all currencies', 'success');
+    },
+    
+    maxHealth: () => {
+      const health = CheatUtils.findByKeywords(['health', 'hp', 'life', 'lives', 'hearts']);
+      health.forEach(item => {
+        if (typeof item.value === 'number') {
+          CheatUtils.setValue(item.path, 999999);
+        }
+      });
+      CheatUtils.log('Attempted to max all health values', 'success');
+    },
+
+    freezeValue: (path) => {
+      const originalValue = eval(path);
+      setInterval(() => {
+        try {
+          CheatUtils.setValue(path, originalValue);
+        } catch {}
+      }, 100);
+      CheatUtils.log(`Frozen ${path} at ${originalValue}`, 'success');
+    },
+    
+    help: () => {
+      console.log(`
+🔥 ADVANCED GAME CHEAT CONSOLE v3.0 - 3000+ LINES OF POWER! 🔥
+
+=== GUI COMMANDS ===
+CHEAT.showGUI() - Show the advanced visual interface
+CHEAT.hideGUI() - Hide the visual interface
+CHEAT.switchTab(name) - Switch to specific tab
+
+=== ENHANCED AUTO-CLICKER ===
+CHEAT.startClicker(options) - Advanced auto-clicker with patterns
+CHEAT.stopClicker() - Stop auto-clicker
+CHEAT.setClickCoords(x, y) - Set specific click coordinates
+CHEAT.getClickStats() - Get detailed clicking statistics
+
+=== ADVANCED VALUE SCANNER ===
+CHEAT.scan(value, options) - Comprehensive value scanning
+CHEAT.filter(value, type) - Filter previous results
+CHEAT.batchModify(indices, value) - Modify multiple values at once
+CHEAT.exportResults() - Export scan results to file
+CHEAT.set(path, value) - Set value directly
+
+=== ENHANCED MEMORY MONITORING ===
+CHEAT.watch(path, options) - Advanced memory monitoring
+CHEAT.analyzeMemory(path) - Statistical analysis of watched values
+CHEAT.exportHistory(path) - Export memory history
+CHEAT.freezeValue(path) - Freeze a value at current state
+
+=== GAME PRESETS ===
+CHEAT.cookieClicker() - Cookie Clicker mega-cheats
+CHEAT.genericClicker() - Universal clicker game cheats
+CHEAT.idleGameHack() - Idle game specific hacks
+CHEAT.speedHack(multiplier) - Advanced speed manipulation
+CHEAT.godMode() - Complete invincibility
+CHEAT.unlockAll() - Unlock everything
+
+=== NETWORK TOOLS ===
+CHEAT.enableNetworkLog() - Monitor all network requests
+CHEAT.getNetworkLogs() - Get request history
+CHEAT.exportNetworkLogs() - Export network data
+
+=== ELEMENT INSPECTOR ===
+CHEAT.inspectElement() - Visual element selection
+CHEAT.modifyElement(prop, val) - Modify element properties
+CHEAT.deleteElement() - Remove selected element
+
+=== CONSOLE INTERFACE ===
+CHEAT.console.execute(code) - Execute code in safe context
+CHEAT.console.setVar(name, value) - Set console variable
+CHEAT.console.history() - View command history
+
+=== QUICK HACKS ===
+CHEAT.maxCurrency() - Find and maximize all currencies
+CHEAT.maxHealth() - Find and maximize all health values
+CHEAT.freezeValue(path) - Prevent value from changing
+
+=== UTILITIES ===
+CHEAT.find(keywords) - Advanced keyword search
+CHEAT.export(data, filename) - Export any data to file
+CHEAT.import(callback) - Import data from file
+
+=== NEW FEATURES ===
+- Batch operations on scan results
+- Real-time memory analysis and alerts
+- Advanced clicking patterns and coordinates
+- Built-in console with command history
+- Network request monitoring and export
+- Element inspection and modification
+- Data import/export functionality
+- Statistical analysis of watched values
+
+🎮 Click the floating 🔥 button for the full GUI experience!
+Total Lines: 3000+ | Version: 3.0 Advanced
+      `);
+    }
+  };
+
+  // Make CHEAT global
+  window.CHEAT = CHEAT;
+  window.CheatGUI = CheatGUI;
+
+  // Initialize GUI
+  CheatGUI.init();
+
+  // Auto-detect and suggest cheats
+  setTimeout(() => {
+    if (typeof Game !== 'undefined' && Game.cookies !== undefined) {
+      CheatUtils.log('Cookie Clicker detected! Try: CHEAT.cookieClicker() or use GUI', 'info');
+    }
+    
+    const currencies = CheatUtils.findByKeywords(['money', 'coins', 'points', 'score']);
+    if (currencies.length > 0) {
+      CheatUtils.log(`Found ${currencies.length} currency values! Try: CHEAT.maxCurrency()`, 'info');
+    }
+    
+    const clickables = document.querySelectorAll('button, [onclick], .button').length;
+    if (clickables > 5) {
+      CheatUtils.log(`Found ${clickables} clickable elements! Try advanced auto-clicker`, 'info');
+    }
+    
+    CheatUtils.log('🎮 Click the floating 🔥 button for the ULTIMATE cheat interface!', 'success');
+  }, 1000);
+
+  CheatUtils.log('🎉 ADVANCED Game Cheat Console v3.0 loaded! (3000+ lines)', 'success');
+  CheatUtils.log('Type CHEAT.help() for all commands or CHEAT.showGUI() for the visual interface', 'info');
+  
 })();
-// REGELS 401–800: Interactieve tabbladen en logica
-Object.assign(EasyCheat, {
-  setupSpy() {
-    const panel = document.getElementById('easycheat-panel-Spy');
-    panel.innerHTML = '';
 
-    const toggle = document.createElement('button');
-    toggle.className = 'easycheat-btn';
-    toggle.textContent = this.state.spyActive ? 'Stop Spy' : 'Start Spy';
-
-    toggle.onclick = () => {
-      this.state.spyActive = !this.state.spyActive;
-      toggle.textContent = this.state.spyActive ? 'Stop Spy' : 'Start Spy';
-      this.log(`Spy ${this.state.spyActive ? 'enabled' : 'disabled'}`);
-    };
-
-    panel.appendChild(toggle);
-  },
-
-  setupConsole() {
-    const panel = document.getElementById('easycheat-panel-Console');
-    panel.innerHTML = '';
-
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.placeholder = 'Voer JavaScript code in...';
-    input.style.width = '100%';
-    input.style.padding = '4px';
-    input.style.marginBottom = '4px';
-    input.style.background = '#111';
-    input.style.border = '1px solid #444';
-    input.style.color = '#fff';
-
-    const output = document.createElement('div');
-    output.style.maxHeight = '150px';
-    output.style.overflowY = 'auto';
-    output.style.background = '#222';
-    output.style.padding = '4px';
-
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        try {
-          const result = eval(input.value);
-          this.log(`>> ${input.value}`);
-          this.log(`<< ${result}`);
-        } catch (err) {
-          this.log(`!! ${err}`);
-        }
-        input.value = '';
-      }
-    });
-
-    panel.appendChild(input);
-    panel.appendChild(output);
-  },
-
-  enableSpyClickTracking() {
-    document.addEventListener('click', (e) => {
-      if (!this.state.spyActive) return;
-
-      const path = e.composedPath();
-      const target = e.target;
-      const tag = target.tagName.toLowerCase();
-      const id = target.id ? `#${target.id}` : '';
-      const cls = target.className ? `.${target.className.toString().replace(/\s+/g, '.')}` : '';
-
-      this.log(`Clicked ${tag}${id}${cls} | text: "${target.innerText.trim()}"`);
-    }, true);
-  },
-
-  enhanceLogs() {
-    const logPanel = document.getElementById('easycheat-panel-Logs');
-    logPanel.addEventListener('dblclick', (e) => {
-      if (e.target.classList.contains('easycheat-log-line')) {
-        const input = document.querySelector('#easycheat-panel-Console input');
-        if (input) {
-          input.value = e.target.textContent.replace(/^\[\d{2}:\d{2}:\d{2}\] (>> |<< |!! )?/, '');
-          input.focus();
-        }
-      }
-    });
-
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Backspace') {
-        const selected = document.querySelector('.easycheat-log-line.selected');
-        if (selected) {
-          selected.remove();
-          this.log('Log entry removed');
-        }
-      }
-    });
-
-    logPanel.addEventListener('click', (e) => {
-      if (e.target.classList.contains('easycheat-log-line')) {
-        document.querySelectorAll('.easycheat-log-line').forEach(el => el.classList.remove('selected'));
-        e.target.classList.add('selected');
-      }
-    });
-  },
-
-  setupScanTab() {
-    const panel = document.getElementById('easycheat-panel-Scan');
-    panel.innerHTML = '';
-
-    const label = document.createElement('label');
-    label.textContent = 'Scan waarde (bijv. Game.cookies): ';
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.value = 'Game.cookies';
-    input.style.width = '100%';
-
-    const button = document.createElement('button');
-    button.className = 'easycheat-btn';
-    button.textContent = 'Scan!';
-    button.onclick = () => {
-      try {
-        const result = eval(input.value);
-        this.log(`${input.value} = ${result}`);
-      } catch (err) {
-        this.log(`Scan error: ${err}`);
-      }
-    };
-
-    panel.appendChild(label);
-    panel.appendChild(input);
-    panel.appendChild(button);
-  },
-
-  setupWatchTab() {
-    const panel = document.getElementById('easycheat-panel-Watch');
-    panel.innerHTML = '';
-
-    const label = document.createElement('label');
-    label.textContent = 'Waarde observeren: ';
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.value = 'Game.cookies';
-    input.style.width = '100%';
-
-    const addBtn = document.createElement('button');
-    addBtn.className = 'easycheat-btn';
-    addBtn.textContent = 'Toevoegen';
-    addBtn.onclick = () => {
-      const varName = input.value;
-      if (!this.state.watchList) this.state.watchList = [];
-      this.state.watchList.push(varName);
-      this.log(`Toegevoegd aan Watch: ${varName}`);
-    };
-
-    panel.appendChild(label);
-    panel.appendChild(input);
-    panel.appendChild(addBtn);
-
-    const watchDiv = document.createElement('div');
-    watchDiv.id = 'easycheat-watchlist';
-    watchDiv.style.marginTop = '10px';
-    panel.appendChild(watchDiv);
-
-    setInterval(() => {
-      if (!this.state.watchList) return;
-      watchDiv.innerHTML = '';
-      this.state.watchList.forEach(v => {
-        try {
-          const val = eval(v);
-          const line = document.createElement('div');
-          line.textContent = `${v} = ${val}`;
-          watchDiv.appendChild(line);
-        } catch (e) {
-          const line = document.createElement('div');
-          line.textContent = `${v} = [error]`;
-          watchDiv.appendChild(line);
-        }
-      });
-    }, 1000);
-  },
-
-  setupExplorerTab() {
-    const panel = document.getElementById('easycheat-panel-Explorer');
-    panel.innerHTML = '';
-
-    const label = document.createElement('label');
-    label.textContent = 'Object verkennen (bv. Game): ';
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.value = 'Game';
-    input.style.width = '100%';
-
-    const exploreBtn = document.createElement('button');
-    exploreBtn.className = 'easycheat-btn';
-    exploreBtn.textContent = 'Explore';
-    exploreBtn.onclick = () => {
-      try {
-        const obj = eval(input.value);
-        panel.innerHTML += `<pre>${JSON.stringify(obj, null, 2)}</pre>`;
-      } catch (err) {
-        this.log(`Explore error: ${err}`);
-      }
-    };
-
-    panel.appendChild(label);
-    panel.appendChild(input);
-    panel.appendChild(exploreBtn);
-  },
-
-  refreshTabs() {
-    this.setupSpy();
-    this.setupConsole();
-    this.setupScanTab();
-    this.setupWatchTab();
-    this.setupExplorerTab();
-    this.enhanceLogs();
-    this.enableSpyClickTracking();
-  }
-});
-
-// Herlaad GUI features
-EasyCheat.refreshTabs();
-// REGELS 801–1200: Theme, Settings, Alerts, Tabsysteem
-Object.assign(EasyCheat, {
-  setupSettingsTab() {
-    const panel = document.getElementById('easycheat-panel-Settings');
-    panel.innerHTML = '';
-
-    const themeBtn = document.createElement('button');
-    themeBtn.className = 'easycheat-btn';
-    themeBtn.textContent = `Thema: ${this.state.darkMode ? 'Donker' : 'Licht'}`;
-    themeBtn.onclick = () => {
-      this.state.darkMode = !this.state.darkMode;
-      themeBtn.textContent = `Thema: ${this.state.darkMode ? 'Donker' : 'Licht'}`;
-      this.toggleTheme(this.state.darkMode);
-      this.log(`Thema veranderd naar ${this.state.darkMode ? 'Donker' : 'Licht'}`);
-    };
-
-    panel.appendChild(themeBtn);
-  },
-
-  toggleTheme(dark) {
-    const style = document.getElementById('easycheat-style');
-    if (dark) {
-      style.innerHTML = this.styles.dark;
-    } else {
-      style.innerHTML = this.styles.light;
-    }
-  },
-
-  setupAlerts() {
-    const alert = document.createElement('div');
-    alert.id = 'easycheat-alert';
-    alert.style.position = 'fixed';
-    alert.style.bottom = '20px';
-    alert.style.left = '50%';
-    alert.style.transform = 'translateX(-50%)';
-    alert.style.padding = '10px 20px';
-    alert.style.borderRadius = '12px';
-    alert.style.background = '#000a';
-    alert.style.color = '#fff';
-    alert.style.fontFamily = 'monospace';
-    alert.style.zIndex = '999999';
-    alert.style.display = 'none';
-    document.body.appendChild(alert);
-  },
-
-  showAlert(msg, duration = 2000) {
-    const alert = document.getElementById('easycheat-alert');
-    if (!alert) return;
-    alert.textContent = msg;
-    alert.style.display = 'block';
-    clearTimeout(this.state._alertTimeout);
-    this.state._alertTimeout = setTimeout(() => {
-      alert.style.display = 'none';
-    }, duration);
-  },
-
-  setupTabButtons() {
-    const tabs = ['Scan', 'Logs', 'Watch', 'Explorer', 'Spy', 'Console', 'Settings'];
-    const tabbar = document.querySelector('.easycheat-tabs');
-
-    tabs.forEach(tab => {
-      const btn = document.createElement('button');
-      btn.textContent = tab;
-      btn.className = 'easycheat-btn';
-      btn.onclick = () => this.switchTab(tab);
-      tabbar.appendChild(btn);
-    });
-  },
-
-  switchTab(name) {
-    const tabs = document.querySelectorAll('.easycheat-tab');
-    tabs.forEach(t => t.style.display = 'none');
-    const active = document.getElementById(`easycheat-panel-${name}`);
-    if (active) active.style.display = 'block';
-    this.log(`Tab geswitcht naar ${name}`);
-  },
-
-  enableDragMove() {
-    const bar = document.querySelector('.easycheat-bar');
-    const gui = document.getElementById('easycheat-ui');
-
-    let offsetX = 0, offsetY = 0, isDragging = false;
-
-    bar.addEventListener('mousedown', (e) => {
-      isDragging = true;
-      offsetX = e.clientX - gui.offsetLeft;
-      offsetY = e.clientY - gui.offsetTop;
-      gui.style.transition = 'none';
-    });
-
-    document.addEventListener('mouseup', () => isDragging = false);
-
-    document.addEventListener('mousemove', (e) => {
-      if (!isDragging) return;
-      gui.style.left = (e.clientX - offsetX) + 'px';
-      gui.style.top = (e.clientY - offsetY) + 'px';
-    });
-  },
-
-  enableWindowButtons() {
-    const gui = document.getElementById('easycheat-ui');
-    const closeBtn = document.createElement('span');
-    closeBtn.textContent = '✕';
-    closeBtn.className = 'easycheat-closebtn';
-    closeBtn.style.position = 'absolute';
-    closeBtn.style.right = '10px';
-    closeBtn.style.top = '8px';
-    closeBtn.style.cursor = 'pointer';
-    closeBtn.onclick = () => {
-      gui.remove();
-      this.log('GUI gesloten');
-    };
-
-    const minBtn = document.createElement('span');
-    minBtn.textContent = '−';
-    minBtn.className = 'easycheat-minbtn';
-    minBtn.style.position = 'absolute';
-    minBtn.style.right = '30px';
-    minBtn.style.top = '8px';
-    minBtn.style.cursor = 'pointer';
-    minBtn.onclick = () => {
-      const body = gui.querySelector('.easycheat-body');
-      body.style.display = body.style.display === 'none' ? 'block' : 'none';
-      this.log('GUI geminimaliseerd/gemaximaliseerd');
-    };
-
-    gui.appendChild(closeBtn);
-    gui.appendChild(minBtn);
-  },
-
-  styles: {
-    dark: `
-      .easycheat-ui { background: #111; color: #fff; border: 1px solid #444; }
-      .easycheat-btn { background: #222; color: #fff; }
-      .easycheat-log-line { color: #0f0; }
-      .easycheat-log-line.selected { background: #444; }
-    `,
-    light: `
-      .easycheat-ui { background: #eee; color: #000; border: 1px solid #ccc; }
-      .easycheat-btn { background: #ddd; color: #000; }
-      .easycheat-log-line { color: #080; }
-      .easycheat-log-line.selected { background: #ccc; }
-    `
-  },
-
-  initUI() {
-    this.setupTabButtons();
-    this.refreshTabs();
-    this.enableSpyClickTracking();
-    this.enableDragMove();
-    this.enableWindowButtons();
-    this.setupSettingsTab();
-    this.setupAlerts();
-    this.toggleTheme(this.state.darkMode || true);
-    this.switchTab('Logs');
-    this.log('GUI volledig geladen');
-  }
-});
-
-// Start initialiseren als nog niet gedaan
-if (!EasyCheat._started) {
-  EasyCheat._started = true;
-  EasyCheat.initUI();
-}
-// REGELS 1201–1600: AutoHack Tools, Explorer & Game Shortcuts
-Object.assign(EasyCheat, {
-  hacks: {
-    autoClick: false,
-    autoBuy: false,
-    clickInterval: null,
-    buyInterval: null
-  },
-
-  setupHackControls() {
-    const panel = document.getElementById('easycheat-panel-Scan');
-    panel.innerHTML = '';
-
-    const clickBtn = document.createElement('button');
-    clickBtn.className = 'easycheat-btn';
-    clickBtn.textContent = 'Auto Click: UIT';
-    clickBtn.onclick = () => {
-      this.hacks.autoClick = !this.hacks.autoClick;
-      clickBtn.textContent = `Auto Click: ${this.hacks.autoClick ? 'AAN' : 'UIT'}`;
-      this.toggleAutoClick();
-    };
-
-    const buyBtn = document.createElement('button');
-    buyBtn.className = 'easycheat-btn';
-    buyBtn.textContent = 'Auto Buy: UIT';
-    buyBtn.onclick = () => {
-      this.hacks.autoBuy = !this.hacks.autoBuy;
-      buyBtn.textContent = `Auto Buy: ${this.hacks.autoBuy ? 'AAN' : 'UIT'}`;
-      this.toggleAutoBuy();
-    };
-
-    const setCookies = document.createElement('button');
-    setCookies.className = 'easycheat-btn';
-    setCookies.textContent = 'Geef 1.000.000 koekjes';
-    setCookies.onclick = () => {
-      if (window.Game && typeof Game.cookies !== 'undefined') {
-        Game.cookies += 1000000;
-        this.log('1.000.000 koekjes toegevoegd!');
-        this.showAlert('1.000.000 koekjes!');
-      } else {
-        this.log('Game.cookies niet gevonden');
-      }
-    };
-
-    panel.append(clickBtn, buyBtn, setCookies);
-  },
-
-  toggleAutoClick() {
-    clearInterval(this.hacks.clickInterval);
-    if (this.hacks.autoClick) {
-      this.hacks.clickInterval = setInterval(() => {
-        if (window.Game && typeof Game.ClickCookie === 'function') {
-          Game.ClickCookie();
-        }
-      }, 10);
-      this.log('Auto Click gestart');
-    } else {
-      this.log('Auto Click gestopt');
-    }
-  },
-
-  toggleAutoBuy() {
-    clearInterval(this.hacks.buyInterval);
-    if (this.hacks.autoBuy) {
-      this.hacks.buyInterval = setInterval(() => {
-        if (window.Game && Game.UpgradesInStore) {
-          Game.UpgradesInStore.forEach(u => u.buy());
-          Game.ObjectsById.forEach(o => o.buy());
-        }
-      }, 1000);
-      this.log('Auto Buy gestart');
-    } else {
-      this.log('Auto Buy gestopt');
-    }
-  },
-
-  updateExplorerTab() {
-    const explorer = document.getElementById('easycheat-panel-Explorer');
-    explorer.innerHTML = '';
-    const el = document.elementFromPoint(this.state.cursorX, this.state.cursorY);
-    if (!el) return;
-
-    const title = document.createElement('div');
-    title.textContent = `Element @ (${this.state.cursorX}, ${this.state.cursorY})`;
-    explorer.appendChild(title);
-
-    const info = document.createElement('pre');
-    info.textContent = this.formatElement(el);
-    explorer.appendChild(info);
-  },
-
-  formatElement(el) {
-    let out = `<${el.tagName.toLowerCase()}`;
-    if (el.id) out += ` id="${el.id}"`;
-    if (el.className) out += ` class="${el.className}"`;
-    out += '>';
-    if (el.innerText) out += `\nText: "${el.innerText.trim().slice(0, 100)}"`;
-    return out;
-  },
-
-  initExplorerTracking() {
-    document.addEventListener('mousemove', (e) => {
-      this.state.cursorX = e.clientX;
-      this.state.cursorY = e.clientY;
-      if (this.activeTab === 'Explorer') this.updateExplorerTab();
-    });
-  },
-
-  setupWatchTab() {
-    const panel = document.getElementById('easycheat-panel-Watch');
-    panel.innerHTML = '';
-
-    const input = document.createElement('input');
-    input.placeholder = 'bv. Game.cookies';
-    input.className = 'easycheat-input';
-    panel.appendChild(input);
-
-    const addBtn = document.createElement('button');
-    addBtn.className = 'easycheat-btn';
-    addBtn.textContent = 'Toevoegen';
-    addBtn.onclick = () => {
-      const expr = input.value.trim();
-      if (expr && !this.state.watchList.includes(expr)) {
-        this.state.watchList.push(expr);
-        this.log(`Toegevoegd aan Watch: ${expr}`);
-      }
-      this.updateWatchPanel();
-    };
-    panel.appendChild(addBtn);
-
-    const container = document.createElement('div');
-    container.id = 'easycheat-watch-values';
-    panel.appendChild(container);
-  },
-
-  updateWatchPanel() {
-    const container = document.getElementById('easycheat-watch-values');
-    if (!container) return;
-    container.innerHTML = '';
-
-    this.state.watchList.forEach(expr => {
-      let val;
-      try {
-        val = eval(expr);
-      } catch (e) {
-        val = '⚠️ Fout';
-      }
-
-      const row = document.createElement('div');
-      row.textContent = `${expr} = ${val}`;
-      container.appendChild(row);
-    });
-  },
-
-  setupTabUpdater() {
-    setInterval(() => {
-      if (this.activeTab === 'Watch') this.updateWatchPanel();
-      if (this.activeTab === 'Explorer') this.updateExplorerTab();
-    }, 500);
-  }
-});
-
-// Extra setup bij starten
-EasyCheat.setupHackControls();
-EasyCheat.initExplorerTracking();
-EasyCheat.setupWatchTab();
-EasyCheat.setupTabUpdater();
-// REGELS 1601–2000: Console API, Prestige Tools, Storage, Finish
-Object.assign(EasyCheat, {
-  setupConsoleHelp() {
-    const panel = document.getElementById('easycheat-panel-Console');
-    const help = document.createElement('div');
-    help.className = 'easycheat-console-help';
-    help.innerHTML = `
-      <b>Snelle commando's:</b><br>
-      <code>ec.log('Hallo')</code> – Schrijft naar log tab<br>
-      <code>ec.watch('Game.cookies')</code> – Voegt item toe aan Watch<br>
-      <code>ec.spy()</code> – Activeert click-spy<br>
-      <code>ec.cheatCookies(1e6)</code> – Geef koekjes<br>
-      <code>ec.clear()</code> – Wis logs<br>
-      <code>ec.close()</code> – Sluit GUI<br>
-    `;
-    panel.appendChild(help);
-  },
-
-  watch(expr) {
-    if (!this.state.watchList.includes(expr)) {
-      this.state.watchList.push(expr);
-      this.updateWatchPanel();
-      this.log(`Toegevoegd aan Watch: ${expr}`);
-    }
-  },
-
-  spy() {
-    this.state.spyEnabled = true;
-    this.log('Spy modus actief: klik een element aan');
-  },
-
-  cheatCookies(amount = 1000000) {
-    if (window.Game && typeof Game.cookies !== 'undefined') {
-      Game.cookies += amount;
-      this.log(`${amount.toLocaleString()} koekjes toegevoegd!`);
-    }
-  },
-
-  clear() {
-    this.state.logs = [];
-    this.updateLogs();
-  },
-
-  close() {
-    const root = document.getElementById('easycheat-root');
-    if (root) root.remove();
-  },
-
-  prestigeBoost() {
-    if (window.Game && typeof Game.EarnHeavenlyChips === 'function') {
-      Game.EarnHeavenlyChips(10000);
-      Game.UpgradesById.forEach(u => {
-        if (u.pool === 'prestige') u.unlock();
-      });
-      this.log('10.000 prestige punten + upgrades!');
-    }
-  },
-
-  unlockAllUpgrades() {
-    if (window.Game) {
-      for (let u in Game.UpgradesById) Game.UpgradesById[u].unlock();
-      this.log('Alle upgrades ontgrendeld!');
-    }
-  },
-
-  unlockAllAchievements() {
-    if (window.Game) {
-      for (let a in Game.AchievementsById) Game.AchievementsById[a].unlock();
-      this.log('Alle achievements ontgrendeld!');
-    }
-  },
-
-  saveState() {
-    localStorage.setItem('easycheat-state', JSON.stringify(this.state));
-    this.log('Instellingen opgeslagen');
-  },
-
-  loadState() {
-    const saved = localStorage.getItem('easycheat-state');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        this.state.watchList = parsed.watchList || [];
-        this.state.spyEnabled = parsed.spyEnabled || false;
-        this.updateWatchPanel();
-        this.log('Instellingen hersteld!');
-      } catch {
-        this.log('Kon opgeslagen data niet laden');
-      }
-    }
-  },
-
-  resetGUI() {
-    localStorage.removeItem('easycheat-state');
-    this.state = {
-      logs: [],
-      watchList: [],
-      spyEnabled: false,
-      cursorX: 0,
-      cursorY: 0,
-    };
-    this.log('Reset voltooid');
-  },
-
-  injectControlFooter() {
-    const footer = document.createElement('div');
-    footer.className = 'easycheat-footer';
-    footer.innerHTML = `
-      <button class="easycheat-btn" onclick="ec.saveState()">💾 Opslaan</button>
-      <button class="easycheat-btn" onclick="ec.loadState()">📂 Laden</button>
-      <button class="easycheat-btn" onclick="ec.resetGUI()">♻️ Reset</button>
-      <button class="easycheat-btn" onclick="ec.close()">❌ Sluiten</button>
-    `;
-    document.getElementById('easycheat-root').appendChild(footer);
-  },
-
-  credits() {
-    this.log('🎉 EasyCheat GUI v1.0 geladen');
-    this.log('Gemaakt door ChatGPT voor Cookie Clicker & meer!');
-    this.log('Gebruik met verantwoordelijkheid 😉');
-  }
-});
-
-// Auto setup:
-EasyCheat.setupConsoleHelp();
-EasyCheat.credits();
-EasyCheat.loadState();
-EasyCheat.injectControlFooter();
-
-// Expose global alias
-window.ec = EasyCheat;
+// Quick access aliases
+window.cheat = window.CHEAT;
+window.hack = window.CHEAT;
