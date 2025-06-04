@@ -1,1280 +1,887 @@
 (() => {
-// MemoryScanner klasse (alternatief voor MultiThreadedScanner)
-class MemoryScanner {
-  constructor(logger) {
-    this.logger = logger;
-    this.results = new Map();
-  }
+  const EasyCheat = {
+    version: '1.0',
+    settings: {
+      theme: 'dark',
+      width: 600,
+      height: 400,
+      zIndex: 999999,
+    },
+    state: {
+      dragging: false,
+      resizing: false,
+      activeTab: 'Scan',
+      logs: [],
+      toggles: {},
+    },
+    tabs: ['Scan', 'Logs', 'Watch', 'Explorer', 'Hooks', 'Spy', 'Console'],
+    init() {
+      this.createStyles();
+      this.createGUI();
+      this.bindEvents();
+      this.log(`EasyCheat v${this.version} initialized`);
+    },
+    createStyles() {
+      const style = document.createElement('style');
+      style.innerHTML = `
+        #easycheat {
+          position: fixed;
+          top: 50px;
+          left: 50px;
+          width: ${this.settings.width}px;
+          height: ${this.settings.height}px;
+          z-index: ${this.settings.zIndex};
+          background: #111;
+          color: #eee;
+          font-family: monospace;
+          border: 2px solid #555;
+          border-radius: 8px;
+          overflow: hidden;
+          display: flex;
+          flex-direction: column;
+        }
+        #easycheat-header {
+          background: #222;
+          padding: 4px 8px;
+          cursor: move;
+          user-select: none;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+        #easycheat-header span {
+          font-weight: bold;
+        }
+        #easycheat-controls {
+          display: flex;
+          gap: 4px;
+        }
+        .easycheat-btn {
+          background: #444;
+          border: none;
+          color: #fff;
+          padding: 2px 6px;
+          cursor: pointer;
+          font-size: 14px;
+        }
+        #easycheat-tabs {
+          display: flex;
+          background: #333;
+        }
+        .easycheat-tab {
+          flex: 1;
+          padding: 4px;
+          text-align: center;
+          cursor: pointer;
+          background: #333;
+        }
+        .easycheat-tab.active {
+          background: #555;
+        }
+        #easycheat-body {
+          flex: 1;
+          background: #000;
+          overflow: auto;
+          padding: 6px;
+        }
+        .easycheat-panel {
+          display: none;
+        }
+        .easycheat-panel.active {
+          display: block;
+        }
+        .easycheat-log-line {
+          border-bottom: 1px solid #444;
+          padding: 2px 0;
+          white-space: pre-wrap;
+          word-break: break-word;
+        }
+      `;
+      document.head.appendChild(style);
+    },
+    createGUI() {
+      const wrapper = document.createElement('div');
+      wrapper.id = 'easycheat';
 
-  async scan(valueType, targetValue, scanType, root) {
-    this.logger.log(`Scan gestart: type=${valueType}, waarde=${targetValue}, scanType=${scanType}`);
-    this.walkObject(root, valueType, targetValue, scanType, '');
-    this.logger.log(`Scan voltooid! Aantal resultaten: ${this.results.size}`);
-  }
+      // Header
+      const header = document.createElement('div');
+      header.id = 'easycheat-header';
+      const title = document.createElement('span');
+      title.textContent = 'EasyCheat';
+      const controls = document.createElement('div');
+      controls.id = 'easycheat-controls';
+      const btnMin = document.createElement('button');
+      btnMin.className = 'easycheat-btn';
+      btnMin.textContent = '-';
+      btnMin.onclick = () => this.toggleMinimize();
+      const btnClose = document.createElement('button');
+      btnClose.className = 'easycheat-btn';
+      btnClose.textContent = 'X';
+      btnClose.onclick = () => wrapper.remove();
+      controls.appendChild(btnMin);
+      controls.appendChild(btnClose);
+      header.appendChild(title);
+      header.appendChild(controls);
+      wrapper.appendChild(header);
 
-  walkObject(obj, valueType, targetValue, scanType, path) {
-    if (!obj || (typeof obj !== 'object' && typeof obj !== 'function')) return;
+      // Tabs
+      const tabs = document.createElement('div');
+      tabs.id = 'easycheat-tabs';
+      this.tabs.forEach(tab => {
+        const tabEl = document.createElement('div');
+        tabEl.className = 'easycheat-tab';
+        tabEl.textContent = tab;
+        tabEl.onclick = () => this.switchTab(tab);
+        if (tab === this.state.activeTab) tabEl.classList.add('active');
+        tabs.appendChild(tabEl);
+      });
+      wrapper.appendChild(tabs);
 
-    for (let key in obj) {
-      if (!Object.prototype.hasOwnProperty.call(obj, key)) continue;
-      const currentPath = path ? `${path}.${key}` : key;
-      let val = obj[key];
-      if (val === undefined) continue;
+      // Body
+      const body = document.createElement('div');
+      body.id = 'easycheat-body';
+      this.tabs.forEach(tab => {
+        const panel = document.createElement('div');
+        panel.className = 'easycheat-panel';
+        panel.id = `easycheat-panel-${tab}`;
+        if (tab === this.state.activeTab) panel.classList.add('active');
+        body.appendChild(panel);
+      });
+      wrapper.appendChild(body);
 
-      if (this.compareVals(scanType, targetValue, val)) {
-        this.results.set(currentPath, val);
-      }
-
-      if (typeof val === 'object' && val !== null) {
-        this.walkObject(val, valueType, targetValue, scanType, currentPath);
-      }
-    }
-  }
-
-  compareVals(scanType, targetValue, val) {
-    if (scanType === 'exact') {
-      return val === targetValue;
-    }
-    // Andere scanlogica (bijvoorbeeld grotere of kleinere waarden)
-    return false;
-  }
-}
-
-  "use strict";
-
-  /**
-   * UniversalCheatEngine (UCE)
-   * Een universele cheat engine voor browser games in de console.
-   * Kan zoeken in memory-achtige objecten, arrays, window scope, met meerdere scan types.
-   * Ondersteunt freeze, logging en multi-scan filtering.
-   * 
-   * Opmerking: Omdat JS geen directe memory toegang heeft,
-   * wordt gezocht in objecten, arrays en primitive waarden binnen window.
-   */
-
-  // Helper: check of een value primitief is (int, float, string)
-  function isPrimitive(val) {
-    return (val === null) || (typeof val !== 'object' && typeof val !== 'function');
-  }
-
-  // Helper: deep clone (voor snapshots)
-  function deepClone(obj) {
-    try {
-      return JSON.parse(JSON.stringify(obj));
-    } catch {
-      return obj;
-    }
-  }
-
-  // Helper: Sleep functie (async delay)
-  function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-  }
-
-  // Helper: Hex converter
-  function toHex(val) {
-    if (typeof val === 'number') {
-      return '0x' + val.toString(16);
-    }
-    if (typeof val === 'string') {
-      return Array.from(val).map(c => c.charCodeAt(0).toString(16).padStart(2,'0')).join(' ');
-    }
-    return String(val);
-  }
-
-  // Helper: compare floats with tolerance
-  function floatEquals(a, b, tolerance = 0.0001) {
-    return Math.abs(a - b) < tolerance;
-  }
-
-  // Log systeem
-  class Logger {
-    constructor() {
-      this.logs = [];
-      this.maxLogs = 1000;
-    }
+      document.body.appendChild(wrapper);
+    },
+    switchTab(tab) {
+      this.state.activeTab = tab;
+      document.querySelectorAll('.easycheat-tab').forEach(el => {
+        el.classList.toggle('active', el.textContent === tab);
+      });
+      this.tabs.forEach(t => {
+        const panel = document.getElementById(`easycheat-panel-${t}`);
+        if (panel) panel.classList.toggle('active', t === tab);
+      });
+      this.log(`Switched to ${tab} tab`);
+    },
+    toggleMinimize() {
+      const body = document.getElementById('easycheat-body');
+      const tabs = document.getElementById('easycheat-tabs');
+      const isVisible = body.style.display !== 'none';
+      body.style.display = isVisible ? 'none' : '';
+      tabs.style.display = isVisible ? 'none' : '';
+    },
     log(msg) {
-      let timestamp = new Date().toISOString();
-      let line = `[${timestamp}] ${msg}`;
-      this.logs.push(line);
-      if (this.logs.length > this.maxLogs) {
-        this.logs.shift();
+      this.state.logs.push(msg);
+      const logPanel = document.getElementById('easycheat-panel-Logs');
+      if (logPanel) {
+        const line = document.createElement('div');
+        line.className = 'easycheat-log-line';
+        line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+        logPanel.appendChild(line);
+        logPanel.scrollTop = logPanel.scrollHeight;
       }
-      console.log(line);
-    }
-    getAll() {
-      return this.logs.slice();
-    }
-    clear() {
-      this.logs.length = 0;
-      console.clear();
-      this.log('Logs gewist');
-    }
-  }
+    },
+    bindEvents() {
+      const header = document.getElementById('easycheat-header');
+      const wrapper = document.getElementById('easycheat');
+      let offsetX = 0, offsetY = 0;
 
-  // Freeze manager
-  class FreezeManager {
-    constructor(logger) {
-      this.frozenEntries = new Map(); // key: address path string, value: frozen value
-      this.interval = null;
-      this.logger = logger;
-      this.freezeDelay = 100; // ms
-    }
+      header.addEventListener('mousedown', (e) => {
+        this.state.dragging = true;
+        offsetX = e.clientX - wrapper.offsetLeft;
+        offsetY = e.clientY - wrapper.offsetTop;
+      });
 
-    freeze(addressPath, getValueFunc, setValueFunc) {
-      if (this.frozenEntries.has(addressPath)) {
-        this.logger.log(`Adres ${addressPath} is al gefrozen.`);
-        return false;
-      }
-      const val = getValueFunc();
-      this.frozenEntries.set(addressPath, {val, getValueFunc, setValueFunc});
-      this.logger.log(`Bevries adres ${addressPath} met waarde: ${val}`);
-      if (!this.interval) {
-        this.start();
-      }
-      return true;
-    }
-
-    unfreeze(addressPath) {
-      if (this.frozenEntries.delete(addressPath)) {
-        this.logger.log(`Stop bevriezen van ${addressPath}`);
-      }
-      if (this.frozenEntries.size === 0 && this.interval) {
-        this.stop();
-      }
-    }
-
-    start() {
-      if (this.interval) return;
-      this.interval = setInterval(() => {
-        this.frozenEntries.forEach(({val, setValueFunc}, path) => {
-          try {
-            setValueFunc(val);
-          } catch(e) {
-            this.logger.log(`Fout tijdens freeze op ${path}: ${e.message}`);
-          }
-        });
-      }, this.freezeDelay);
-      this.logger.log('Freeze loop gestart');
-    }
-
-    stop() {
-      if (this.interval) {
-        clearInterval(this.interval);
-        this.interval = null;
-        this.logger.log('Freeze loop gestopt');
-      }
-    }
-
-    listFrozen() {
-      return Array.from(this.frozenEntries.keys());
-    }
-  }
-
-  // Memory scanner engine (doorloopt JS object tree)
-  class MemoryScanner {
-    constructor(logger) {
-      this.logger = logger;
-      this.lastScanResults = new Map(); // key: addressPath string, value: {value, type}
-      this.currentScanType = null;
-      this.currentValueType = null;
-    }
-
-    // Scan types supported:
-    // exact, unknown_initial, increased, decreased, changed, unchanged
-
-    // Value types supported: int, float, double (alias float), hex, string
-
-    // addressPath is string representing locatie in object boom, bv: "window.game.score"
-    // We gebruiken adressen als strings, omdat geen echte pointer.
-
-    /**
-     * Recursief doorzoeken van object boom
-     * @param {Object} root 
-     * @param {String} valueType 
-     * @param {any} targetValue 
-     * @param {Function} onMatch callback(addrPath, value)
-     * @param {Number} maxDepth maximale diepte (default 10)
-     * @param {Boolean} searchAllAlsOnbekendInitial
-     * @returns {Promise<void>}
-     */
-    async scan(root, valueType, targetValue, scanType, maxDepth = 10, searchAllAlsOnbekendInitial = true) {
-      this.logger.log(`Scan gestart: type=${scanType}, valueType=${valueType}, targetValue=${targetValue}`);
-      this.currentScanType = scanType;
-      this.currentValueType = valueType;
-
-      let matches = new Map();
-
-      const self = this;
-
-      // Helper: converteer waarde naar vergelijkbaar formaat
-      function convertValue(val) {
-        if (val === null || val === undefined) return null;
-        switch(valueType) {
-          case 'int': return (typeof val === 'number') ? Math.floor(val) : null;
-          case 'float':
-          case 'double': return (typeof val === 'number') ? val : null;
-          case 'hex': return (typeof val === 'string') ? val.toLowerCase() : null;
-          case 'string': return (typeof val === 'string') ? val : null;
-          default: return val;
+      document.addEventListener('mousemove', (e) => {
+        if (this.state.dragging) {
+          wrapper.style.left = `${e.clientX - offsetX}px`;
+          wrapper.style.top = `${e.clientY - offsetY}px`;
         }
-      }
+      });
 
-      // Helper: vergelijk 2 waarden met scanType
-      function compareVals(scanType, oldVal, newVal) {
-        if (oldVal === null || newVal === null) return false;
-        switch(scanType) {
-          case 'exact': 
-            if (valueType === 'float' || valueType === 'double') return floatEquals(oldVal, newVal);
-            else return oldVal === newVal;
-          case 'unknown_initial': 
-            return true; // alles match bij eerste scan
-          case 'increased': return newVal > oldVal;
-          case 'decreased': return newVal < oldVal;
-          case 'changed': return oldVal !== newVal;
-          case 'unchanged': return oldVal === newVal;
-          default: return false;
-        }
-      }
-
-      // Async recursive object walker
-      async function walk(obj, path, depth) {
-        if (depth > maxDepth) return;
-        if (!obj || (typeof obj !== 'object' && typeof obj !== 'function')) return;
-
-        try {
-          for (let key in obj) {
-            if (!Object.prototype.hasOwnProperty.call(obj, key)) continue;
-
-            // Check cyclus
-            let nextPath = path ? `${path}.${key}` : key;
-
-            let val;
-            try {
-              val = obj[key];
-            } catch {
-              continue; // property kan get thrown als niet toegankelijk
-            }
-            if (val === undefined) continue;
-
-            // Converteer val
-            let convVal = convertValue(val);
-            if (convVal === null) {
-              // Verder zoeken als object
-              if (typeof val === 'object' && val !== null) {
-                await walk(val, nextPath, depth+1);
-              }
-              continue;
-            }
-
-            // Bepaal oldVal (voor vervolg scans)
-            let oldEntry = self.lastScanResults.get(nextPath);
-            let oldVal = oldEntry ? oldEntry.value : null;
-
-            // Check match op basis scanType
-            if (compareVals(scanType, oldVal, convVal)) {
-              matches.set(nextPath, {value: convVal, type: valueType});
-            }
-          }
-        } catch(e) {
-          self.logger.log(`Error tijdens scan walk: ${e.message}`);
-        }
-      }
-
-      // Voor eerste scan: targetValue kan null, dan zoeken we alles (unknown_initial)
-      // Bij unknown_initial zoeken we alles, anders alleen matches met targetValue
-
-      if (scanType === 'unknown_initial' && (targetValue === null || targetValue === undefined)) {
-        // Zoek alles en sla op (geen filter)
-        await walk(root, '', 0);
-      } else {
-        // Eerste scan: zoek exacte matches of filter voor volgende scans
-        await walk(root, '', 0);
-        // Filter matches voor exact targetValue als unknown_initial
-        if (scanType === 'unknown_initial' && targetValue !== null && targetValue !== undefined) {
-          for (let [k,v] of matches) {
-            if (valueType === 'string' || valueType === 'hex') {
-              if (!v.value.includes(targetValue)) {
-                matches.delete(k);
-              }
-            } else {
-              if (v.value !== targetValue) {
-                matches.delete(k);
-              }
-            }
-          }
-        }
-      }
-
-      this.lastScanResults = matches;
-      this.logger.log(`Scan klaar, resultaten: ${matches.size}`);
+      document.addEventListener('mouseup', () => {
+        this.state.dragging = false;
+      });
     }
-
-    getResults() {
-      return this.lastScanResults;
-    }
-
-    clearResults() {
-      this.lastScanResults.clear();
-    }
-  }
-
-  // Main UCE object
-  const UCE = {
-    logger: new Logger(),
-    freezeManager: null,
-    scanner: null,
-
-    init() {
-      this.logger.log('UniversalCheatEngine initialiseren...');
-      this.freezeManager = new FreezeManager(this.logger);
-      this.scanner = new MemoryScanner(this.logger);
-      this.logger.log('UniversalCheatEngine gereed. Run UCE.help() voor gebruik.');
-    },
-
-    help() {
-      console.log(`
-      UniversalCheatEngine Help:
-
-      Start scan:
-      UCE.startScan({valueType:'int|float|double|hex|string', scanType:'unknown_initial|exact|increased|decreased|changed|unchanged', value:targetValue});
-
-      Volgende scan filteren:
-      UCE.nextScan({scanType:'exact|increased|decreased|changed|unchanged', value:targetValue});
-
-      Resultaten bekijken:
-      UCE.printResults();
-
-      Freeze waarde:
-      UCE.freezeAddress(addressPath);
-
-      Unfreeze:
-      UCE.unfreezeAddress(addressPath);
-
-      Logs tonen:
-      UCE.printLogs();
-
-      Logs wissen:
-      UCE.clearLogs();
-
-      Frozen adressen:
-      UCE.listFrozen();
-
-      Reset resultaten:
-      UCE.resetScan();
-
-      `);
-    },
-
-    /**
-     * Parse user input value
-     */
-    parseInputValue(type, val) {
-      if (val === null || val === undefined) return null;
-      switch(type) {
-        case 'int': return parseInt(val);
-        case 'float':
-        case 'double': return parseFloat(val);
-        case 'hex': 
-          if (typeof val === 'string') {
-            val = val.replace(/^0x/, '');
-            return val.toLowerCase();
-          }
-          return null;
-        case 'string': return val.toString();
-        default: return val;
-      }
-    },
-
-    async startScan({valueType='int', scanType='unknown_initial', value=null, maxDepth=10} = {}) {
-      this.logger.log(`Start scan met type=${scanType}, valueType=${valueType}, value=${value}`);
-      let parsedVal = this.parseInputValue(valueType, value);
-
-      await this.scanner.scan(window, valueType, parsedVal, scanType, maxDepth);
-
-      this.logger.log(`Scan compleet. Resultaten: ${this.scanner.getResults().size}`);
-      this.printResults();
-    },
-
-    async nextScan({scanType='exact', value=null} = {}) {
-      if (!this.scanner.lastScanResults || this.scanner.lastScanResults.size === 0) {
-        this.logger.log('Geen vorige scan resultaten beschikbaar.');
-        return;
-      }
-      let valueType = this.scanner.currentValueType;
-      let parsedVal = this.parseInputValue(valueType, value);
-
-      // Bij next scan filter je huidige resultaten opnieuw, dus je scant opnieuw maar filtert old vs new values
-      // Hiervoor maken we een tijdelijke map, waarin we alleen resultaten behouden die voldoen aan scanType.
-
-      this.logger.log(`Volgende scan gestart: filter op ${scanType} met waarde ${parsedVal}`);
-
-      // Maak snapshot van oude waarden
-      const oldResults = new Map(this.scanner.lastScanResults);
-      const newResults = new Map();
-
-      // Async check nieuwe waarden
-      for (const [addressPath, oldEntry] of oldResults) {
-        let parts = addressPath.split('.');
-        let currentObj = window;
-        let accessible = true;
-
-        for (let i = 1; i < parts.length; i++) {
-          if (currentObj && parts[i] in currentObj) {
-            currentObj = currentObj[parts[i]];
-          } else {
-            accessible = false;
-            break;
-          }
-        }
-        if (!accessible) continue;
-
-        let newVal = currentObj;
-
-        // convert newVal
-        if (valueType === 'int') newVal = (typeof newVal === 'number') ? Math.floor(newVal) : null;
-        else if (valueType === 'float' || valueType === 'double') newVal = (typeof newVal === 'number') ? newVal : null;
-        else if (valueType === 'string') newVal = (typeof newVal === 'string') ? newVal : null;
-        else if (valueType === 'hex' && typeof newVal === 'string') newVal = newVal.toLowerCase();
-        else newVal = null;
-
-        if (newVal === null) continue;
-
-        // vergelijk oude waarde met nieuwe
-        let oldVal = oldEntry.value;
-
-        // Check scanType
-        let match = false;
-        switch(scanType) {
-          case 'exact':
-            if (valueType === 'float' || valueType === 'double') match = floatEquals(oldVal, newVal);
-            else match = (oldVal === newVal);
-            break;
-          case 'increased':
-            match = (newVal > oldVal);
-            break;
-          case 'decreased':
-            match = (newVal < oldVal);
-            break;
-          case 'changed':
-            match = (oldVal !== newVal);
-            break;
-          case 'unchanged':
-            match = (oldVal === newVal);
-            break;
-          default:
-            match = false;
-        }
-        if (match) {
-          newResults.set(addressPath, {value: newVal, type: valueType});
-        }
-      }
-      this.scanner.lastScanResults = newResults;
-      this.logger.log(`Volgende scan compleet. Resultaten: ${newResults.size}`);
-      this.printResults();
-    },
-
-    printResults() {
-      const results = this.scanner.getResults();
-      if (results.size === 0) {
-        console.log('Geen resultaten gevonden.');
-        return;
-      }
-      console.groupCollapsed(`Scan Resultaten (${results.size})`);
-      for (let [address, entry] of results) {
-        console.log(`${address}: ${entry.value} [${entry.type}]`);
-      }
-      console.groupEnd();
-    },
-
-    printLogs() {
-      const logs = this.logger.getAll();
-      console.groupCollapsed(`Logs (${logs.length})`);
-      logs.forEach(l => console.log(l));
-      console.groupEnd();
-    },
-
-    clearLogs() {
-      this.logger.clear();
-    },
-
-    freezeAddress(addressPath) {
-      // Probeer waarde te lezen en te schrijven via eval (omdat we geen pointers hebben)
-      if (!addressPath || typeof addressPath !== 'string') {
-        this.logger.log('Ongeldig adresPad opgegeven.');
-        return false;
-      }
-      try {
-        let getValueFunc = () => {
-          return eval(addressPath);
-        };
-        let setValueFunc = (v) => {
-          eval(`${addressPath} = ${JSON.stringify(v)}`);
-        };
-        return this.freezeManager.freeze(addressPath, getValueFunc, setValueFunc);
-      } catch (e) {
-        this.logger.log(`Fout bij freeze adres ${addressPath}: ${e.message}`);
-        return false;
-      }
-    },
-
-    unfreezeAddress(addressPath) {
-      this.freezeManager.unfreeze(addressPath);
-    },
-
-    listFrozen() {
-      let frozen = this.freezeManager.listFrozen();
-      if (frozen.length === 0) {
-        console.log('Geen gefroren adressen.');
-      } else {
-        console.log('Gefroren adressen:');
-        frozen.forEach(addr => console.log(addr));
-      }
-      return frozen;
-    },
-
-    resetScan() {
-      this.scanner.clearResults();
-      this.logger.log('Scan resultaten gereset.');
-    }
-
   };
 
-  // Init UCE
-  UCE.init();
-
-  // Expose globally
-  window.UCE = UCE;
-
-  // Prompt voor help
-  console.log('UniversalCheatEngine geladen. Run UCE.help() voor commando\'s.');
-
+  EasyCheat.init();
 })();
-(() => {
-  "use strict";
+// REGELS 401–800: Interactieve tabbladen en logica
+Object.assign(EasyCheat, {
+  setupSpy() {
+    const panel = document.getElementById('easycheat-panel-Spy');
+    panel.innerHTML = '';
 
-  // Extra functies om data te manipuleren
-  class ValueEditor {
-    constructor(logger) {
-      this.logger = logger;
-    }
+    const toggle = document.createElement('button');
+    toggle.className = 'easycheat-btn';
+    toggle.textContent = this.state.spyActive ? 'Stop Spy' : 'Start Spy';
 
-    /**
-     * Wijzig de waarde van een object, array, of primitive waarde
-     * @param {string} addressPath Pad naar het adres (bijv. 'window.game.score')
-     * @param {any} newValue Nieuwe waarde om te zetten naar het adres
-     */
-    editValue(addressPath, newValue) {
-      try {
-        const currentValue = eval(addressPath);
-        if (currentValue === undefined || currentValue === null) {
-          this.logger.log(`Waarde op ${addressPath} bestaat niet of is null/undefined`);
-          return false;
-        }
+    toggle.onclick = () => {
+      this.state.spyActive = !this.state.spyActive;
+      toggle.textContent = this.state.spyActive ? 'Stop Spy' : 'Start Spy';
+      this.log(`Spy ${this.state.spyActive ? 'enabled' : 'disabled'}`);
+    };
 
-        // Verander de waarde naar nieuwe waarde
-        eval(`${addressPath} = ${JSON.stringify(newValue)}`);
-        this.logger.log(`Waarde op ${addressPath} succesvol gewijzigd naar: ${newValue}`);
-        return true;
-      } catch (e) {
-        this.logger.log(`Fout bij het bewerken van ${addressPath}: ${e.message}`);
-        return false;
-      }
-    }
-  }
+    panel.appendChild(toggle);
+  },
 
-  // Voor geavanceerdere scan types (bijv. 'contains' voor strings)
-  class AdvancedMemoryScanner extends MemoryScanner {
-    constructor(logger) {
-      super(logger);
-    }
+  setupConsole() {
+    const panel = document.getElementById('easycheat-panel-Console');
+    panel.innerHTML = '';
 
-    /**
-     * Voeg extra scan type toe voor "contains" voor strings
-     */
-    async scan(root, valueType, targetValue, scanType, maxDepth = 10) {
-      this.logger.log(`Scan gestart: type=${scanType}, valueType=${valueType}, targetValue=${targetValue}`);
-      this.currentScanType = scanType;
-      this.currentValueType = valueType;
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.placeholder = 'Voer JavaScript code in...';
+    input.style.width = '100%';
+    input.style.padding = '4px';
+    input.style.marginBottom = '4px';
+    input.style.background = '#111';
+    input.style.border = '1px solid #444';
+    input.style.color = '#fff';
 
-      let matches = new Map();
+    const output = document.createElement('div');
+    output.style.maxHeight = '150px';
+    output.style.overflowY = 'auto';
+    output.style.background = '#222';
+    output.style.padding = '4px';
 
-      const self = this;
-
-      // Helper om waarde te converteren naar het juiste type
-      function convertValue(val) {
-        if (val === null || val === undefined) return null;
-        switch(valueType) {
-          case 'int': return (typeof val === 'number') ? Math.floor(val) : null;
-          case 'float':
-          case 'double': return (typeof val === 'number') ? val : null;
-          case 'hex': return (typeof val === 'string') ? val.toLowerCase() : null;
-          case 'string': return (typeof val === 'string') ? val : null;
-          default: return val;
-        }
-      }
-
-      // Extra scantype: 'contains' voor string matching
-      function compareVals(scanType, oldVal, newVal) {
-        if (oldVal === null || newVal === null) return false;
-        switch(scanType) {
-          case 'exact': 
-            if (valueType === 'float' || valueType === 'double') return floatEquals(oldVal, newVal);
-            else return oldVal === newVal;
-          case 'contains':
-            return (typeof oldVal === 'string' && typeof newVal === 'string' && newVal.includes(oldVal));
-          case 'unknown_initial': 
-            return true; // alles match bij eerste scan
-          case 'increased': return newVal > oldVal;
-          case 'decreased': return newVal < oldVal;
-          case 'changed': return oldVal !== newVal;
-          case 'unchanged': return oldVal === newVal;
-          default: return false;
-        }
-      }
-
-      async function walk(obj, path, depth) {
-        if (depth > maxDepth) return;
-        if (!obj || (typeof obj !== 'object' && typeof obj !== 'function')) return;
-
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
         try {
-          for (let key in obj) {
-            if (!Object.prototype.hasOwnProperty.call(obj, key)) continue;
+          const result = eval(input.value);
+          this.log(`>> ${input.value}`);
+          this.log(`<< ${result}`);
+        } catch (err) {
+          this.log(`!! ${err}`);
+        }
+        input.value = '';
+      }
+    });
 
-            let nextPath = path ? `${path}.${key}` : key;
-            let val;
-            try {
-              val = obj[key];
-            } catch {
-              continue; // property kan get thrown als niet toegankelijk
-            }
-            if (val === undefined) continue;
+    panel.appendChild(input);
+    panel.appendChild(output);
+  },
 
-            let convVal = convertValue(val);
-            if (convVal === null) {
-              if (typeof val === 'object' && val !== null) {
-                await walk(val, nextPath, depth + 1);
-              }
-              continue;
-            }
+  enableSpyClickTracking() {
+    document.addEventListener('click', (e) => {
+      if (!this.state.spyActive) return;
 
-            let oldEntry = self.lastScanResults.get(nextPath);
-            let oldVal = oldEntry ? oldEntry.value : null;
+      const path = e.composedPath();
+      const target = e.target;
+      const tag = target.tagName.toLowerCase();
+      const id = target.id ? `#${target.id}` : '';
+      const cls = target.className ? `.${target.className.toString().replace(/\s+/g, '.')}` : '';
 
-            if (compareVals(scanType, oldVal, convVal)) {
-              matches.set(nextPath, {value: convVal, type: valueType});
-            }
-          }
+      this.log(`Clicked ${tag}${id}${cls} | text: "${target.innerText.trim()}"`);
+    }, true);
+  },
+
+  enhanceLogs() {
+    const logPanel = document.getElementById('easycheat-panel-Logs');
+    logPanel.addEventListener('dblclick', (e) => {
+      if (e.target.classList.contains('easycheat-log-line')) {
+        const input = document.querySelector('#easycheat-panel-Console input');
+        if (input) {
+          input.value = e.target.textContent.replace(/^\[\d{2}:\d{2}:\d{2}\] (>> |<< |!! )?/, '');
+          input.focus();
+        }
+      }
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Backspace') {
+        const selected = document.querySelector('.easycheat-log-line.selected');
+        if (selected) {
+          selected.remove();
+          this.log('Log entry removed');
+        }
+      }
+    });
+
+    logPanel.addEventListener('click', (e) => {
+      if (e.target.classList.contains('easycheat-log-line')) {
+        document.querySelectorAll('.easycheat-log-line').forEach(el => el.classList.remove('selected'));
+        e.target.classList.add('selected');
+      }
+    });
+  },
+
+  setupScanTab() {
+    const panel = document.getElementById('easycheat-panel-Scan');
+    panel.innerHTML = '';
+
+    const label = document.createElement('label');
+    label.textContent = 'Scan waarde (bijv. Game.cookies): ';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = 'Game.cookies';
+    input.style.width = '100%';
+
+    const button = document.createElement('button');
+    button.className = 'easycheat-btn';
+    button.textContent = 'Scan!';
+    button.onclick = () => {
+      try {
+        const result = eval(input.value);
+        this.log(`${input.value} = ${result}`);
+      } catch (err) {
+        this.log(`Scan error: ${err}`);
+      }
+    };
+
+    panel.appendChild(label);
+    panel.appendChild(input);
+    panel.appendChild(button);
+  },
+
+  setupWatchTab() {
+    const panel = document.getElementById('easycheat-panel-Watch');
+    panel.innerHTML = '';
+
+    const label = document.createElement('label');
+    label.textContent = 'Waarde observeren: ';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = 'Game.cookies';
+    input.style.width = '100%';
+
+    const addBtn = document.createElement('button');
+    addBtn.className = 'easycheat-btn';
+    addBtn.textContent = 'Toevoegen';
+    addBtn.onclick = () => {
+      const varName = input.value;
+      if (!this.state.watchList) this.state.watchList = [];
+      this.state.watchList.push(varName);
+      this.log(`Toegevoegd aan Watch: ${varName}`);
+    };
+
+    panel.appendChild(label);
+    panel.appendChild(input);
+    panel.appendChild(addBtn);
+
+    const watchDiv = document.createElement('div');
+    watchDiv.id = 'easycheat-watchlist';
+    watchDiv.style.marginTop = '10px';
+    panel.appendChild(watchDiv);
+
+    setInterval(() => {
+      if (!this.state.watchList) return;
+      watchDiv.innerHTML = '';
+      this.state.watchList.forEach(v => {
+        try {
+          const val = eval(v);
+          const line = document.createElement('div');
+          line.textContent = `${v} = ${val}`;
+          watchDiv.appendChild(line);
         } catch (e) {
-          self.logger.log(`Error tijdens scan walk: ${e.message}`);
+          const line = document.createElement('div');
+          line.textContent = `${v} = [error]`;
+          watchDiv.appendChild(line);
         }
-      }
+      });
+    }, 1000);
+  },
 
-      // Zoek naar matches
-      if (scanType === 'unknown_initial' && (targetValue === null || targetValue === undefined)) {
-        await walk(root, '', 0);
+  setupExplorerTab() {
+    const panel = document.getElementById('easycheat-panel-Explorer');
+    panel.innerHTML = '';
+
+    const label = document.createElement('label');
+    label.textContent = 'Object verkennen (bv. Game): ';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = 'Game';
+    input.style.width = '100%';
+
+    const exploreBtn = document.createElement('button');
+    exploreBtn.className = 'easycheat-btn';
+    exploreBtn.textContent = 'Explore';
+    exploreBtn.onclick = () => {
+      try {
+        const obj = eval(input.value);
+        panel.innerHTML += `<pre>${JSON.stringify(obj, null, 2)}</pre>`;
+      } catch (err) {
+        this.log(`Explore error: ${err}`);
+      }
+    };
+
+    panel.appendChild(label);
+    panel.appendChild(input);
+    panel.appendChild(exploreBtn);
+  },
+
+  refreshTabs() {
+    this.setupSpy();
+    this.setupConsole();
+    this.setupScanTab();
+    this.setupWatchTab();
+    this.setupExplorerTab();
+    this.enhanceLogs();
+    this.enableSpyClickTracking();
+  }
+});
+
+// Herlaad GUI features
+EasyCheat.refreshTabs();
+// REGELS 801–1200: Theme, Settings, Alerts, Tabsysteem
+Object.assign(EasyCheat, {
+  setupSettingsTab() {
+    const panel = document.getElementById('easycheat-panel-Settings');
+    panel.innerHTML = '';
+
+    const themeBtn = document.createElement('button');
+    themeBtn.className = 'easycheat-btn';
+    themeBtn.textContent = `Thema: ${this.state.darkMode ? 'Donker' : 'Licht'}`;
+    themeBtn.onclick = () => {
+      this.state.darkMode = !this.state.darkMode;
+      themeBtn.textContent = `Thema: ${this.state.darkMode ? 'Donker' : 'Licht'}`;
+      this.toggleTheme(this.state.darkMode);
+      this.log(`Thema veranderd naar ${this.state.darkMode ? 'Donker' : 'Licht'}`);
+    };
+
+    panel.appendChild(themeBtn);
+  },
+
+  toggleTheme(dark) {
+    const style = document.getElementById('easycheat-style');
+    if (dark) {
+      style.innerHTML = this.styles.dark;
+    } else {
+      style.innerHTML = this.styles.light;
+    }
+  },
+
+  setupAlerts() {
+    const alert = document.createElement('div');
+    alert.id = 'easycheat-alert';
+    alert.style.position = 'fixed';
+    alert.style.bottom = '20px';
+    alert.style.left = '50%';
+    alert.style.transform = 'translateX(-50%)';
+    alert.style.padding = '10px 20px';
+    alert.style.borderRadius = '12px';
+    alert.style.background = '#000a';
+    alert.style.color = '#fff';
+    alert.style.fontFamily = 'monospace';
+    alert.style.zIndex = '999999';
+    alert.style.display = 'none';
+    document.body.appendChild(alert);
+  },
+
+  showAlert(msg, duration = 2000) {
+    const alert = document.getElementById('easycheat-alert');
+    if (!alert) return;
+    alert.textContent = msg;
+    alert.style.display = 'block';
+    clearTimeout(this.state._alertTimeout);
+    this.state._alertTimeout = setTimeout(() => {
+      alert.style.display = 'none';
+    }, duration);
+  },
+
+  setupTabButtons() {
+    const tabs = ['Scan', 'Logs', 'Watch', 'Explorer', 'Spy', 'Console', 'Settings'];
+    const tabbar = document.querySelector('.easycheat-tabs');
+
+    tabs.forEach(tab => {
+      const btn = document.createElement('button');
+      btn.textContent = tab;
+      btn.className = 'easycheat-btn';
+      btn.onclick = () => this.switchTab(tab);
+      tabbar.appendChild(btn);
+    });
+  },
+
+  switchTab(name) {
+    const tabs = document.querySelectorAll('.easycheat-tab');
+    tabs.forEach(t => t.style.display = 'none');
+    const active = document.getElementById(`easycheat-panel-${name}`);
+    if (active) active.style.display = 'block';
+    this.log(`Tab geswitcht naar ${name}`);
+  },
+
+  enableDragMove() {
+    const bar = document.querySelector('.easycheat-bar');
+    const gui = document.getElementById('easycheat-ui');
+
+    let offsetX = 0, offsetY = 0, isDragging = false;
+
+    bar.addEventListener('mousedown', (e) => {
+      isDragging = true;
+      offsetX = e.clientX - gui.offsetLeft;
+      offsetY = e.clientY - gui.offsetTop;
+      gui.style.transition = 'none';
+    });
+
+    document.addEventListener('mouseup', () => isDragging = false);
+
+    document.addEventListener('mousemove', (e) => {
+      if (!isDragging) return;
+      gui.style.left = (e.clientX - offsetX) + 'px';
+      gui.style.top = (e.clientY - offsetY) + 'px';
+    });
+  },
+
+  enableWindowButtons() {
+    const gui = document.getElementById('easycheat-ui');
+    const closeBtn = document.createElement('span');
+    closeBtn.textContent = '✕';
+    closeBtn.className = 'easycheat-closebtn';
+    closeBtn.style.position = 'absolute';
+    closeBtn.style.right = '10px';
+    closeBtn.style.top = '8px';
+    closeBtn.style.cursor = 'pointer';
+    closeBtn.onclick = () => {
+      gui.remove();
+      this.log('GUI gesloten');
+    };
+
+    const minBtn = document.createElement('span');
+    minBtn.textContent = '−';
+    minBtn.className = 'easycheat-minbtn';
+    minBtn.style.position = 'absolute';
+    minBtn.style.right = '30px';
+    minBtn.style.top = '8px';
+    minBtn.style.cursor = 'pointer';
+    minBtn.onclick = () => {
+      const body = gui.querySelector('.easycheat-body');
+      body.style.display = body.style.display === 'none' ? 'block' : 'none';
+      this.log('GUI geminimaliseerd/gemaximaliseerd');
+    };
+
+    gui.appendChild(closeBtn);
+    gui.appendChild(minBtn);
+  },
+
+  styles: {
+    dark: `
+      .easycheat-ui { background: #111; color: #fff; border: 1px solid #444; }
+      .easycheat-btn { background: #222; color: #fff; }
+      .easycheat-log-line { color: #0f0; }
+      .easycheat-log-line.selected { background: #444; }
+    `,
+    light: `
+      .easycheat-ui { background: #eee; color: #000; border: 1px solid #ccc; }
+      .easycheat-btn { background: #ddd; color: #000; }
+      .easycheat-log-line { color: #080; }
+      .easycheat-log-line.selected { background: #ccc; }
+    `
+  },
+
+  initUI() {
+    this.setupTabButtons();
+    this.refreshTabs();
+    this.enableSpyClickTracking();
+    this.enableDragMove();
+    this.enableWindowButtons();
+    this.setupSettingsTab();
+    this.setupAlerts();
+    this.toggleTheme(this.state.darkMode || true);
+    this.switchTab('Logs');
+    this.log('GUI volledig geladen');
+  }
+});
+
+// Start initialiseren als nog niet gedaan
+if (!EasyCheat._started) {
+  EasyCheat._started = true;
+  EasyCheat.initUI();
+}
+// REGELS 1201–1600: AutoHack Tools, Explorer & Game Shortcuts
+Object.assign(EasyCheat, {
+  hacks: {
+    autoClick: false,
+    autoBuy: false,
+    clickInterval: null,
+    buyInterval: null
+  },
+
+  setupHackControls() {
+    const panel = document.getElementById('easycheat-panel-Scan');
+    panel.innerHTML = '';
+
+    const clickBtn = document.createElement('button');
+    clickBtn.className = 'easycheat-btn';
+    clickBtn.textContent = 'Auto Click: UIT';
+    clickBtn.onclick = () => {
+      this.hacks.autoClick = !this.hacks.autoClick;
+      clickBtn.textContent = `Auto Click: ${this.hacks.autoClick ? 'AAN' : 'UIT'}`;
+      this.toggleAutoClick();
+    };
+
+    const buyBtn = document.createElement('button');
+    buyBtn.className = 'easycheat-btn';
+    buyBtn.textContent = 'Auto Buy: UIT';
+    buyBtn.onclick = () => {
+      this.hacks.autoBuy = !this.hacks.autoBuy;
+      buyBtn.textContent = `Auto Buy: ${this.hacks.autoBuy ? 'AAN' : 'UIT'}`;
+      this.toggleAutoBuy();
+    };
+
+    const setCookies = document.createElement('button');
+    setCookies.className = 'easycheat-btn';
+    setCookies.textContent = 'Geef 1.000.000 koekjes';
+    setCookies.onclick = () => {
+      if (window.Game && typeof Game.cookies !== 'undefined') {
+        Game.cookies += 1000000;
+        this.log('1.000.000 koekjes toegevoegd!');
+        this.showAlert('1.000.000 koekjes!');
       } else {
-        await walk(root, '', 0);
+        this.log('Game.cookies niet gevonden');
       }
+    };
 
-      this.lastScanResults = matches;
-      this.logger.log(`Scan klaar, resultaten: ${matches.size}`);
-    }
-  }
+    panel.append(clickBtn, buyBtn, setCookies);
+  },
 
-  // Verbeterde logger met filters
-  class FilteredLogger extends Logger {
-    constructor() {
-      super();
-      this.filters = [];
-    }
-
-    /**
-     * Voeg een filter toe die logs zal filteren op basis van de tekst
-     * @param {string} filterStr Tekst die gefilterd moet worden
-     */
-    addFilter(filterStr) {
-      this.filters.push(filterStr);
-      this.log(`Filter toegevoegd: ${filterStr}`);
-    }
-
-    /**
-     * Filter logs en toon ze met een filter tekst
-     */
-    getFilteredLogs() {
-      return this.logs.filter(log => this.filters.every(filter => log.includes(filter)));
-    }
-
-    /**
-     * Clear alle filters
-     */
-    clearFilters() {
-      this.filters = [];
-      this.log('Alle filters gewist.');
-    }
-  }
-
-  // Nieuwe Functionaliteit: Multi-threaded scanning voor grotere datasets
-  class MultiThreadedScanner extends AdvancedMemoryScanner {
-    constructor(logger) {
-      super(logger);
-      this.threads = 4;
-    }
-
-    // Gebruik async/await om scanning multi-threaded te maken (met concurrency)
-    async multiThreadedScan(root, valueType, targetValue, scanType, maxDepth = 10) {
-      const threadPromises = [];
-      const chunkSize = Math.ceil(Object.keys(root).length / this.threads);
-      let currentIndex = 0;
-      
-      for (let i = 0; i < this.threads; i++) {
-        const threadStart = currentIndex;
-        const threadEnd = Math.min(threadStart + chunkSize, Object.keys(root).length);
-
-        // Creëer nieuwe thread (scan deel van het object)
-        const threadPromise = this._scanChunk(root, valueType, targetValue, scanType, threadStart, threadEnd, maxDepth);
-        threadPromises.push(threadPromise);
-
-        currentIndex = threadEnd;
-      }
-
-      // Wacht totdat alle threads klaar zijn
-      await Promise.all(threadPromises);
-      this.logger.log(`Multi-threaded scan voltooid.`);
-    }
-
-    // Scan voor een chunk van de object data
-    async _scanChunk(root, valueType, targetValue, scanType, startIndex, endIndex, maxDepth) {
-      const keys = Object.keys(root).slice(startIndex, endIndex);
-      for (let key of keys) {
-        const val = root[key];
-        const convertedVal = this.convertValue(val);
-        if (convertedVal !== null && this.compareVals(scanType, targetValue, convertedVal)) {
-          this.lastScanResults.set(key, {value: convertedVal, type: valueType});
+  toggleAutoClick() {
+    clearInterval(this.hacks.clickInterval);
+    if (this.hacks.autoClick) {
+      this.hacks.clickInterval = setInterval(() => {
+        if (window.Game && typeof Game.ClickCookie === 'function') {
+          Game.ClickCookie();
         }
-      }
+      }, 10);
+      this.log('Auto Click gestart');
+    } else {
+      this.log('Auto Click gestopt');
     }
-  }
+  },
 
-  // UCE uitbreiding met de nieuwe functionaliteiten
-  const UCE = {
-    logger: new FilteredLogger(),
-    freezeManager: null,
-    scanner: null,
-    valueEditor: null,
-
-    init() {
-      this.logger.log('UniversalCheatEngine 2.0 geladen...');
-      this.freezeManager = new FreezeManager(this.logger);
-      this.scanner = new MultiThreadedScanner(this.logger);
-      this.valueEditor = new ValueEditor(this.logger);
-      this.logger.log('UniversalCheatEngine gereed. Run UCE.help() voor commando\'s.');
-    },
-
-    /**
-     * Start een scan met verbeterde functionaliteit
-     * @param {object} options Opties voor de scan
-     */
-    async startScan({valueType = 'int', scanType = 'unknown_initial', value = null, maxDepth = 10} = {}) {
-      this.logger.log(`Start scan met type=${scanType}, valueType=${valueType}, value=${value}`);
-      let parsedVal = this.parseInputValue(valueType, value);
-      await this.scanner.multiThreadedScan(window, valueType, parsedVal, scanType, maxDepth);
-      this.logger.log(`Scan voltooid! Resultaten: ${this.scanner.getResults().size}`);
-      this.printResults();
-    },
-
-    /**
-     * Wijzig een specifieke waarde in het geheugen
-     * @param {string} address Pad naar het object (bv. window.game.score)
-     * @param {any} newValue Nieuwe waarde
-     */
-    editMemory(address, newValue) {
-      this.valueEditor.editValue(address, newValue);
-    }
-  };
-
-  // Initialisatie
-  UCE.init();
-
-  // Exposeer UCE global
-  window.UCE = UCE;
-
-  console.log('Gebruik UCE.help() voor hulp.');
-})();
-(() => {
-  "use strict";
-
-  // De Logger wordt verder geoptimaliseerd
-  class AdvancedLogger extends FilteredLogger {
-    constructor() {
-      super();
-    }
-
-    /**
-     * Toon alle logs in de console met extra details.
-     */
-    printLogs() {
-      const logs = this.getFilteredLogs();
-      if (logs.length === 0) {
-        console.log('Geen logs beschikbaar.');
-      } else {
-        console.groupCollapsed('Geavanceerde Logs:');
-        logs.forEach(log => {
-          console.log(log);
-        });
-        console.groupEnd();
-      }
-    }
-
-    /**
-     * Sla logs op naar een extern bestand (mock functie)
-     */
-    saveLogsToFile() {
-      const logs = this.getFilteredLogs();
-      const blob = new Blob([logs.join('\n')], {type: 'text/plain'});
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'logs.txt';
-      a.click();
-    }
-  }
-
-  // Log Tab
-  class LogsTab {
-    constructor(logger) {
-      this.logger = logger;
-      this.logsTabElement = document.getElementById('logs-tab');
-      this.filterInput = document.getElementById('filter-logs');
-      this.saveButton = document.getElementById('save-logs');
-    }
-
-    init() {
-      this.filterInput.addEventListener('input', (e) => this.filterLogs(e.target.value));
-      this.saveButton.addEventListener('click', () => this.logger.saveLogsToFile());
-    }
-
-    /**
-     * Filter de logs op basis van de zoekopdracht
-     */
-    filterLogs(filterString) {
-      this.logger.addFilter(filterString);
-      this.refreshLogDisplay();
-    }
-
-    /**
-     * Vernieuw de logsweergave in de tab
-     */
-    refreshLogDisplay() {
-      const logsContainer = this.logsTabElement.querySelector('.log-container');
-      logsContainer.innerHTML = '';
-      this.logger.printLogs();
-    }
-  }
-
-  // Interface componenten zoals de Tab Switcher
-  class TabSwitcher {
-    constructor() {
-      this.tabs = document.querySelectorAll('.tab');
-      this.tabButtons = document.querySelectorAll('.tab-button');
-    }
-
-    /**
-     * Switch tussen verschillende tabs op basis van de actieve knop
-     * @param {string} activeTabId De ID van de actieve tab
-     */
-    switchTab(activeTabId) {
-      this.tabs.forEach(tab => tab.classList.add('hidden'));
-      const activeTab = document.getElementById(activeTabId);
-      if (activeTab) {
-        activeTab.classList.remove('hidden');
-      }
-      this.updateActiveTabButton(activeTabId);
-    }
-
-    /**
-     * Update de actieve tab-knop
-     * @param {string} activeTabId De ID van de actieve tab
-     */
-    updateActiveTabButton(activeTabId) {
-      this.tabButtons.forEach(button => button.classList.remove('active'));
-      const activeButton = document.querySelector(`.tab-button[data-tab="${activeTabId}"]`);
-      if (activeButton) {
-        activeButton.classList.add('active');
-      }
-    }
-  }
-
-  // Geavanceerde configuratie instellingen
-  class Configurator {
-    constructor() {
-      this.settings = {
-        autoScanInterval: 1000,
-        maxDepth: 10
-      };
-    }
-
-    /**
-     * Update de configuratie instellingen
-     * @param {string} setting De instelling die je wilt aanpassen
-     * @param {any} value De nieuwe waarde voor de instelling
-     */
-    updateSetting(setting, value) {
-      if (this.settings.hasOwnProperty(setting)) {
-        this.settings[setting] = value;
-        console.log(`Instelling ${setting} bijgewerkt naar ${value}`);
-      } else {
-        console.error(`Instelling ${setting} niet gevonden!`);
-      }
-    }
-
-    /**
-     * Toon alle huidige instellingen
-     */
-    displaySettings() {
-      console.log('Huidige Instellingen:', this.settings);
-    }
-  }
-
-  // Voeg tab functionaliteit toe aan de interface
-  class Interface {
-    constructor() {
-      this.tabSwitcher = new TabSwitcher();
-      this.logsTab = new LogsTab(new AdvancedLogger());
-      this.configurator = new Configurator();
-    }
-
-    /**
-     * Initieer de UI en voeg event listeners toe
-     */
-    init() {
-      this.tabSwitcher.switchTab('scan-tab'); // Zet default tab naar scan
-      this.logsTab.init();
-      this.addConfigEventListeners();
-    }
-
-    /**
-     * Voeg configuratie event listeners toe
-     */
-    addConfigEventListeners() {
-      const intervalInput = document.getElementById('auto-scan-interval');
-      const maxDepthInput = document.getElementById('max-depth-input');
-
-      intervalInput.addEventListener('change', () => {
-        this.configurator.updateSetting('autoScanInterval', parseInt(intervalInput.value));
-      });
-
-      maxDepthInput.addEventListener('change', () => {
-        this.configurator.updateSetting('maxDepth', parseInt(maxDepthInput.value));
-      });
-    }
-
-    /**
-     * Handig hulpmiddel om configuratie-instellingen te laden via de UI
-     */
-    loadConfiguration() {
-      document.getElementById('auto-scan-interval').value = this.configurator.settings.autoScanInterval;
-      document.getElementById('max-depth-input').value = this.configurator.settings.maxDepth;
-    }
-  }
-
-  // UniversalCheatEngine uitbreiden met interface en configuraties
-  const UCE = {
-    logger: new AdvancedLogger(),
-    freezeManager: null,
-    scanner: null,
-    valueEditor: null,
-    interface: null,
-    configurator: null,
-
-    init() {
-      this.logger.log('UniversalCheatEngine 3.0 geladen...');
-      this.freezeManager = new FreezeManager(this.logger);
-      this.scanner = new MultiThreadedScanner(this.logger);
-      this.valueEditor = new ValueEditor(this.logger);
-      this.interface = new Interface();
-      this.configurator = new Configurator();
-      this.interface.init();
-      this.logger.log('UniversalCheatEngine gereed. Run UCE.help() voor commando\'s.');
-    },
-
-    /**
-     * Start een scan met verbeterde functionaliteit
-     * @param {object} options Opties voor de scan
-     */
-    async startScan({valueType = 'int', scanType = 'unknown_initial', value = null, maxDepth = 10} = {}) {
-      this.logger.log(`Start scan met type=${scanType}, valueType=${valueType}, value=${value}`);
-      let parsedVal = this.parseInputValue(valueType, value);
-      await this.scanner.multiThreadedScan(window, valueType, parsedVal, scanType, maxDepth);
-      this.logger.log(`Scan voltooid! Resultaten: ${this.scanner.getResults().size}`);
-      this.printResults();
-    },
-
-    /**
-     * Wijzig een specifieke waarde in het geheugen
-     * @param {string} address Pad naar het object (bv. window.game.score)
-     * @param {any} newValue Nieuwe waarde
-     */
-    editMemory(address, newValue) {
-      this.valueEditor.editValue(address, newValue);
-    },
-
-    /**
-     * Reset alle instellingen
-     */
-    resetSettings() {
-      this.configurator.updateSetting('autoScanInterval', 1000);
-      this.configurator.updateSetting('maxDepth', 10);
-    },
-
-    /**
-     * Toon de instellingen
-     */
-    showSettings() {
-      this.configurator.displaySettings();
-    }
-  };
-
-  // Initialisatie
-  UCE.init();
-
-  // Exposeer UCE global
-  window.UCE = UCE;
-
-  console.log('Gebruik UCE.help() voor hulp.');
-})();
-(() => {
-  "use strict";
-
-  // Freeze Manager
-  class FreezeManager {
-    constructor(logger) {
-      this.frozenValues = new Map();
-      this.logger = logger;
-    }
-
-    /**
-     * Voeg een variabele toe aan de frozen lijst en vergrendel deze waarde.
-     * @param {string} addressPath Het pad naar het object of variabele (bv. 'window.game.score')
-     * @param {Function} getValueFunc Functie om de waarde van het adres op te halen
-     * @param {Function} setValueFunc Functie om de waarde van het adres in te stellen
-     */
-    freeze(addressPath, getValueFunc, setValueFunc) {
-      if (this.frozenValues.has(addressPath)) {
-        this.logger.log(`Adres ${addressPath} is al bevroren.`);
-        return false;
-      }
-      this.frozenValues.set(addressPath, {getValueFunc, setValueFunc});
-      this.logger.log(`Bevroren waarde op ${addressPath}.`);
-
-      // Override de setter om de waarde constant te houden
-      this.overrideValue(addressPath, getValueFunc, setValueFunc);
-      return true;
-    }
-
-    /**
-     * Verwijder een variabele uit de frozen lijst
-     * @param {string} addressPath Het pad naar het object of variabele
-     */
-    unfreeze(addressPath) {
-      if (this.frozenValues.has(addressPath)) {
-        this.frozenValues.delete(addressPath);
-        this.logger.log(`Bevroren waarde op ${addressPath} is ontgrendeld.`);
-      }
-    }
-
-    /**
-     * Toon alle bevroren waarden
-     */
-    listFrozen() {
-      return [...this.frozenValues.keys()];
-    }
-
-    /**
-     * Intercept de setter om de waarde constant te houden
-     * @param {string} addressPath Het pad naar het object
-     * @param {Function} getValueFunc Functie om de waarde van het adres op te halen
-     * @param {Function} setValueFunc Functie om de waarde van het adres in te stellen
-     */
-    overrideValue(addressPath, getValueFunc, setValueFunc) {
-      const originalValue = getValueFunc();
-
-      // Houd de waarde vast
-      Object.defineProperty(window, addressPath, {
-        get: function() {
-          return originalValue;
-        },
-        set: function(value) {
-          setValueFunc(value);
-        },
-        configurable: true
-      });
-    }
-  }
-
-  // Geavanceerde Scan Class (dieper zoeken in objecten)
-  class DeepMemoryScanner extends MultiThreadedScanner {
-    constructor(logger) {
-      super(logger);
-    }
-
-    /**
-     * Scan meerdere niveaus van een object
-     * @param {Object} root Het root-object om te doorzoeken
-     * @param {string} valueType Het type waarde dat we zoeken
-     * @param {any} targetValue De doelwaarde waar we naar zoeken
-     * @param {string} scanType Het type scan (exact, increased, etc.)
-     * @param {number} maxDepth Maximaal aantal niveaus van scan
-     */
-    async deepScan(root, valueType, targetValue, scanType, maxDepth = 10) {
-      this.logger.log(`Diepe scan gestart: ${scanType}, ${valueType}, maxDepth=${maxDepth}`);
-      const matches = new Map();
-      await this.walkObject(root, valueType, targetValue, scanType, '', matches, maxDepth);
-      this.lastScanResults = matches;
-      this.logger.log(`Diepe scan voltooid. Aantal resultaten: ${matches.size}`);
-    }
-
-    /**
-     * Diepe object scanfunctie
-     * @param {Object} obj Het object dat we scannen
-     * @param {string} valueType Het type waarde dat we zoeken
-     * @param {any} targetValue De doelwaarde waar we naar zoeken
-     * @param {string} scanType Het type scan
-     * @param {string} path Het huidige pad van het object
-     * @param {Map} matches Resultaten die gevonden zijn
-     * @param {number} depth De diepte van de huidige scan
-     * @param {number} maxDepth Maximale scan diepte
-     */
-    async walkObject(obj, valueType, targetValue, scanType, path, matches, maxDepth, depth = 0) {
-      if (depth > maxDepth || !obj || (typeof obj !== 'object' && typeof obj !== 'function')) return;
-      for (let key in obj) {
-        if (!Object.prototype.hasOwnProperty.call(obj, key)) continue;
-        const currentPath = path ? `${path}.${key}` : key;
-        let val;
-
-        try {
-          val = obj[key];
-        } catch {
-          continue; // property kan get thrown als niet toegankelijk
+  toggleAutoBuy() {
+    clearInterval(this.hacks.buyInterval);
+    if (this.hacks.autoBuy) {
+      this.hacks.buyInterval = setInterval(() => {
+        if (window.Game && Game.UpgradesInStore) {
+          Game.UpgradesInStore.forEach(u => u.buy());
+          Game.ObjectsById.forEach(o => o.buy());
         }
-        if (val === undefined) continue;
-
-        const convertedVal = this.convertValue(val);
-        if (convertedVal !== null && this.compareVals(scanType, targetValue, convertedVal)) {
-          matches.set(currentPath, {value: convertedVal, type: valueType});
-        }
-
-        // Recursieve scan van objecten
-        if (typeof val === 'object' && val !== null) {
-          await this.walkObject(val, valueType, targetValue, scanType, currentPath, matches, maxDepth, depth + 1);
-        }
-      }
+      }, 1000);
+      this.log('Auto Buy gestart');
+    } else {
+      this.log('Auto Buy gestopt');
     }
+  },
+
+  updateExplorerTab() {
+    const explorer = document.getElementById('easycheat-panel-Explorer');
+    explorer.innerHTML = '';
+    const el = document.elementFromPoint(this.state.cursorX, this.state.cursorY);
+    if (!el) return;
+
+    const title = document.createElement('div');
+    title.textContent = `Element @ (${this.state.cursorX}, ${this.state.cursorY})`;
+    explorer.appendChild(title);
+
+    const info = document.createElement('pre');
+    info.textContent = this.formatElement(el);
+    explorer.appendChild(info);
+  },
+
+  formatElement(el) {
+    let out = `<${el.tagName.toLowerCase()}`;
+    if (el.id) out += ` id="${el.id}"`;
+    if (el.className) out += ` class="${el.className}"`;
+    out += '>';
+    if (el.innerText) out += `\nText: "${el.innerText.trim().slice(0, 100)}"`;
+    return out;
+  },
+
+  initExplorerTracking() {
+    document.addEventListener('mousemove', (e) => {
+      this.state.cursorX = e.clientX;
+      this.state.cursorY = e.clientY;
+      if (this.activeTab === 'Explorer') this.updateExplorerTab();
+    });
+  },
+
+  setupWatchTab() {
+    const panel = document.getElementById('easycheat-panel-Watch');
+    panel.innerHTML = '';
+
+    const input = document.createElement('input');
+    input.placeholder = 'bv. Game.cookies';
+    input.className = 'easycheat-input';
+    panel.appendChild(input);
+
+    const addBtn = document.createElement('button');
+    addBtn.className = 'easycheat-btn';
+    addBtn.textContent = 'Toevoegen';
+    addBtn.onclick = () => {
+      const expr = input.value.trim();
+      if (expr && !this.state.watchList.includes(expr)) {
+        this.state.watchList.push(expr);
+        this.log(`Toegevoegd aan Watch: ${expr}`);
+      }
+      this.updateWatchPanel();
+    };
+    panel.appendChild(addBtn);
+
+    const container = document.createElement('div');
+    container.id = 'easycheat-watch-values';
+    panel.appendChild(container);
+  },
+
+  updateWatchPanel() {
+    const container = document.getElementById('easycheat-watch-values');
+    if (!container) return;
+    container.innerHTML = '';
+
+    this.state.watchList.forEach(expr => {
+      let val;
+      try {
+        val = eval(expr);
+      } catch (e) {
+        val = '⚠️ Fout';
+      }
+
+      const row = document.createElement('div');
+      row.textContent = `${expr} = ${val}`;
+      container.appendChild(row);
+    });
+  },
+
+  setupTabUpdater() {
+    setInterval(() => {
+      if (this.activeTab === 'Watch') this.updateWatchPanel();
+      if (this.activeTab === 'Explorer') this.updateExplorerTab();
+    }, 500);
   }
+});
 
-  // Netwerk Monitoren (optioneel)
-  class NetworkMonitor {
-    constructor(logger) {
-      this.logger = logger;
-      this.requests = [];
+// Extra setup bij starten
+EasyCheat.setupHackControls();
+EasyCheat.initExplorerTracking();
+EasyCheat.setupWatchTab();
+EasyCheat.setupTabUpdater();
+// REGELS 1601–2000: Console API, Prestige Tools, Storage, Finish
+Object.assign(EasyCheat, {
+  setupConsoleHelp() {
+    const panel = document.getElementById('easycheat-panel-Console');
+    const help = document.createElement('div');
+    help.className = 'easycheat-console-help';
+    help.innerHTML = `
+      <b>Snelle commando's:</b><br>
+      <code>ec.log('Hallo')</code> – Schrijft naar log tab<br>
+      <code>ec.watch('Game.cookies')</code> – Voegt item toe aan Watch<br>
+      <code>ec.spy()</code> – Activeert click-spy<br>
+      <code>ec.cheatCookies(1e6)</code> – Geef koekjes<br>
+      <code>ec.clear()</code> – Wis logs<br>
+      <code>ec.close()</code> – Sluit GUI<br>
+    `;
+    panel.appendChild(help);
+  },
+
+  watch(expr) {
+    if (!this.state.watchList.includes(expr)) {
+      this.state.watchList.push(expr);
+      this.updateWatchPanel();
+      this.log(`Toegevoegd aan Watch: ${expr}`);
     }
+  },
 
-    /**
-     * Start de monitoring van netwerkverzoeken
-     */
-    start() {
-      this.logger.log('Netwerkmonitor gestart. Alle netwerkverzoeken worden gevolgd.');
-      const originalFetch = window.fetch;
-      window.fetch = async (...args) => {
-        const response = await originalFetch(...args);
-        this.logRequest(args, response);
-        return response;
-      };
+  spy() {
+    this.state.spyEnabled = true;
+    this.log('Spy modus actief: klik een element aan');
+  },
+
+  cheatCookies(amount = 1000000) {
+    if (window.Game && typeof Game.cookies !== 'undefined') {
+      Game.cookies += amount;
+      this.log(`${amount.toLocaleString()} koekjes toegevoegd!`);
     }
+  },
 
-    /**
-     * Log netwerkverzoeken
-     * @param {Array} args De argumenten van de fetch-aanroep
-     * @param {Response} response Het response-object
-     */
-    logRequest(args, response) {
-      const request = {
-        url: args[0],
-        method: args[1]?.method || 'GET',
-        status: response.status
-      };
-      this.requests.push(request);
-      this.logger.log(`Netwerkverzoek: ${request.method} ${request.url} Status: ${request.status}`);
-    }
+  clear() {
+    this.state.logs = [];
+    this.updateLogs();
+  },
 
-    /**
-     * Toon alle netwerkverzoeken
-     */
-    printRequests() {
-      if (this.requests.length === 0) {
-        this.logger.log('Geen netwerkverzoeken geregistreerd.');
-        return;
-      }
+  close() {
+    const root = document.getElementById('easycheat-root');
+    if (root) root.remove();
+  },
 
-      console.group('Netwerkverzoeken:');
-      this.requests.forEach(req => {
-        console.log(`${req.method} ${req.url} - Status: ${req.status}`);
+  prestigeBoost() {
+    if (window.Game && typeof Game.EarnHeavenlyChips === 'function') {
+      Game.EarnHeavenlyChips(10000);
+      Game.UpgradesById.forEach(u => {
+        if (u.pool === 'prestige') u.unlock();
       });
-      console.groupEnd();
+      this.log('10.000 prestige punten + upgrades!');
     }
+  },
+
+  unlockAllUpgrades() {
+    if (window.Game) {
+      for (let u in Game.UpgradesById) Game.UpgradesById[u].unlock();
+      this.log('Alle upgrades ontgrendeld!');
+    }
+  },
+
+  unlockAllAchievements() {
+    if (window.Game) {
+      for (let a in Game.AchievementsById) Game.AchievementsById[a].unlock();
+      this.log('Alle achievements ontgrendeld!');
+    }
+  },
+
+  saveState() {
+    localStorage.setItem('easycheat-state', JSON.stringify(this.state));
+    this.log('Instellingen opgeslagen');
+  },
+
+  loadState() {
+    const saved = localStorage.getItem('easycheat-state');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        this.state.watchList = parsed.watchList || [];
+        this.state.spyEnabled = parsed.spyEnabled || false;
+        this.updateWatchPanel();
+        this.log('Instellingen hersteld!');
+      } catch {
+        this.log('Kon opgeslagen data niet laden');
+      }
+    }
+  },
+
+  resetGUI() {
+    localStorage.removeItem('easycheat-state');
+    this.state = {
+      logs: [],
+      watchList: [],
+      spyEnabled: false,
+      cursorX: 0,
+      cursorY: 0,
+    };
+    this.log('Reset voltooid');
+  },
+
+  injectControlFooter() {
+    const footer = document.createElement('div');
+    footer.className = 'easycheat-footer';
+    footer.innerHTML = `
+      <button class="easycheat-btn" onclick="ec.saveState()">💾 Opslaan</button>
+      <button class="easycheat-btn" onclick="ec.loadState()">📂 Laden</button>
+      <button class="easycheat-btn" onclick="ec.resetGUI()">♻️ Reset</button>
+      <button class="easycheat-btn" onclick="ec.close()">❌ Sluiten</button>
+    `;
+    document.getElementById('easycheat-root').appendChild(footer);
+  },
+
+  credits() {
+    this.log('🎉 EasyCheat GUI v1.0 geladen');
+    this.log('Gemaakt door ChatGPT voor Cookie Clicker & meer!');
+    this.log('Gebruik met verantwoordelijkheid 😉');
   }
+});
 
-  // Initialisatie van UCE (Universal Cheat Engine)
-  const UCE = {
-    logger: new AdvancedLogger(),
-    freezeManager: null,
-    scanner: null,
-    valueEditor: null,
-    networkMonitor: null,
-    configurator: null,
+// Auto setup:
+EasyCheat.setupConsoleHelp();
+EasyCheat.credits();
+EasyCheat.loadState();
+EasyCheat.injectControlFooter();
 
-    init() {
-      this.logger.log('UniversalCheatEngine 4.0 geladen...');
-      this.freezeManager = new FreezeManager(this.logger);
-      this.scanner = new DeepMemoryScanner(this.logger);
-      this.valueEditor = new ValueEditor(this.logger);
-      this.networkMonitor = new NetworkMonitor(this.logger);
-      this.configurator = new Configurator();
-      this.logger.log('UniversalCheatEngine gereed. Run UCE.help() voor commando\'s.');
-    },
-
-    /**
-     * Start een diepere scan op het geheugen
-     * @param {object} options Opties voor de scan
-     */
-    async startDeepScan({valueType = 'int', scanType = 'unknown_initial', value = null, maxDepth = 10} = {}) {
-      this.logger.log(`Diepe scan gestart met type=${scanType}, valueType=${valueType}, value=${value}`);
-      let parsedVal = this.parseInputValue(valueType, value);
-      await this.scanner.deepScan(window, valueType, parsedVal, scanType, maxDepth);
-      this.logger.log(`Scan voltooid! Resultaten: ${this.scanner.getResults().size}`);
-      this.printResults();
-    },
-
-    /**
-     * Start de netwerkmonitor
-     */
-    startNetworkMonitoring() {
-      this.networkMonitor.start();
-    },
-
-    /**
-     * Toon alle netwerkverzoeken
-     */
-    showNetworkRequests() {
-      this.networkMonitor.printRequests();
-    }
-  };
-
-  // Initialisatie
-  UCE.init();
-
-  // Exposeer UCE global
-  window.UCE = UCE;
-
-  console.log('Gebruik UCE.help() voor hulp.');
-})();
+// Expose global alias
+window.ec = EasyCheat;
