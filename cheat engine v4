@@ -1,16 +1,17 @@
 
-// Anticheat Tester v1.1 - Console Injectable Version
+// toxivids cheat engine v4 - Console Injectable Version
 // Paste this entire script into your browser's developer console to run
 
 (function() {
     
-    class AnticheatTesterGUI {
+    class ToxividsCheatEngine {
         constructor() {
             this.isVisible = false;
             this.position = { x: 50, y: 50 };
             this.size = { width: 1200, height: 800 };
             this.activeTab = 'memory';
             this.memoryResults = [];
+            this.previousScanResults = [];
             this.consoleHistory = [];
             this.frozenVars = new Map();
             this.autoclickerActive = false;
@@ -29,12 +30,15 @@
             this.selectedElement = null;
             this.deepScanMode = false;
             this.followMouse = false;
-            this.logEverything = false;
             this.keySpammerActive = false;
             this.mousePosition = { x: 0, y: 0 };
             this.eventLogger = [];
             this.networkLogger = [];
             this.originalFunctions = new Map();
+            this.explorerState = new Map(); // Track expanded states
+            this.monitoringLevel = 'none'; // none, light, medium, deep
+            this.monitoringInterval = null;
+            this.firstScanDone = false;
             
             this.init();
         }
@@ -42,18 +46,18 @@
         init() {
             this.createGUI();
             this.bindEvents();
-            this.setupEventLogging();
             this.loadSettings();
             this.show();
-            this.addLog('info', 'Anticheat Tester v1.1 initialized');
+            this.addLog('info', 'toxivids cheat engine v4 initialized');
+            this.logGUIAction('Application started');
         }
         
         createGUI() {
-            const existing = document.getElementById('anticheat-tester-gui');
+            const existing = document.getElementById('toxivids-cheat-engine');
             if (existing) existing.remove();
             
             this.container = document.createElement('div');
-            this.container.id = 'anticheat-tester-gui';
+            this.container.id = 'toxivids-cheat-engine';
             this.container.innerHTML = this.getHTML();
             
             const styleElement = document.createElement('style');
@@ -69,7 +73,7 @@
             return `
                 <div class="av-window" style="left: ${this.position.x}px; top: ${this.position.y}px; width: ${this.size.width}px; height: ${this.size.height}px;">
                     <div class="av-header">
-                        <div class="av-title">🛡️ Anticheat Tester v1.1</div>
+                        <div class="av-title">🔧 toxivids cheat engine v4</div>
                         <div class="av-controls">
                             <button class="av-btn av-minimize">_</button>
                             <button class="av-btn av-close">×</button>
@@ -80,10 +84,10 @@
                             <button class="av-tab active" data-tab="memory">Memory Scan</button>
                             <button class="av-tab" data-tab="console">Console</button>
                             <button class="av-tab" data-tab="autoclicker">Autoclicker</button>
-                            <button class="av-tab" data-tab="dom">DOM Viewer</button>
+                            <button class="av-tab" data-tab="explorer">Explorer</button>
                             <button class="av-tab" data-tab="anticheat">Anti-Cheat</button>
                             <button class="av-tab" data-tab="keybinds">Keybinds</button>
-                            <button class="av-tab" data-tab="performance">Performance</button>
+                            <button class="av-tab" data-tab="network">Network</button>
                             <button class="av-tab" data-tab="extra">Extra</button>
                             <button class="av-tab" data-tab="logs">Logs</button>
                         </div>
@@ -91,10 +95,10 @@
                             ${this.getMemoryTabHTML()}
                             ${this.getConsoleTabHTML()}
                             ${this.getAutoclickerTabHTML()}
-                            ${this.getDOMTabHTML()}
+                            ${this.getExplorerTabHTML()}
                             ${this.getAntiCheatTabHTML()}
                             ${this.getKeybindsTabHTML()}
-                            ${this.getPerformanceTabHTML()}
+                            ${this.getNetworkTabHTML()}
                             ${this.getExtraTabHTML()}
                             ${this.getLogsTabHTML()}
                         </div>
@@ -108,7 +112,7 @@
             return `
                 <div class="av-tab-pane active" data-tab="memory">
                     <div class="av-toolbar">
-                        <input type="text" class="av-input" id="memory-search" placeholder="Search value (e.g., Game.cookies, 100, 'text')..." value="">
+                        <input type="text" class="av-input" id="memory-search" placeholder="Search value (e.g., 100, 'text', Game.cookies)..." value="">
                         <select class="av-select" id="memory-type">
                             <option value="all">All Types</option>
                             <option value="number">Number</option>
@@ -120,21 +124,21 @@
                         <label class="av-checkbox-label">
                             <input type="checkbox" id="deep-scan-mode"> Deep Scan
                         </label>
-                        <button class="av-btn av-btn-primary" id="start-scan">🔍 Scan Memory</button>
+                        <button class="av-btn av-btn-primary" id="first-scan">🔍 First Scan</button>
+                        <button class="av-btn" id="next-scan" disabled>🔄 Next Scan</button>
                         <button class="av-btn" id="clear-results">🗑️ Clear</button>
-                        <button class="av-btn" id="export-results">📥 Export</button>
                     </div>
                     <div class="av-progress-container">
                         <div class="av-progress" id="scan-progress" style="width: 0%"></div>
                     </div>
                     <div class="av-stats">
                         Results: <span id="result-count">0</span> | 
-                        Scanned: <span id="scanned-count">0</span> objects |
+                        Previous: <span id="previous-count">0</span> |
                         Selected: <span id="selected-count">0</span>
                     </div>
                     <div class="av-memory-container">
                         <div class="av-results" id="memory-results">
-                            <div class="av-placeholder">Enter search term and click 'Scan Memory' to find variables</div>
+                            <div class="av-placeholder">Enter search term and click 'First Scan' to find variables</div>
                         </div>
                         <div class="av-memory-details" id="memory-details">
                             <h4>Memory Details</h4>
@@ -155,7 +159,6 @@
                     <div class="av-toolbar">
                         <button class="av-btn" id="clear-console">🗑️ Clear</button>
                         <button class="av-btn" id="save-console">💾 Save Output</button>
-                        <button class="av-btn" id="load-script">📁 Load Script</button>
                     </div>
                     <div class="av-console-section">
                         <label>JavaScript Code:</label>
@@ -165,7 +168,7 @@
                     <div class="av-console-section">
                         <label>Console Output:</label>
                         <div class="av-console-output" id="console-output">
-                            <div class="av-console-line">Anticheat Tester Console v1.1 Ready</div>
+                            <div class="av-console-line">toxivids cheat engine v4 Console Ready</div>
                             <div class="av-console-line">Type JavaScript above and click Execute</div>
                         </div>
                     </div>
@@ -181,11 +184,14 @@
                             <button class="av-btn" id="decrement-value">➖ Decrement</button>
                             <button class="av-btn" id="multiply-value">✖️ Multiply x10</button>
                             <button class="av-btn" id="get-value">👁️ Get Value</button>
-                            <button class="av-btn" id="watch-value">👀 Watch Changes</button>
+                            <button class="av-btn" id="unfreeze-all">🔓 Unfreeze All</button>
                         </div>
                         <div class="av-status">
-                            Frozen variables: <span id="frozen-count">0</span> | 
-                            Watched variables: <span id="watched-count">0</span>
+                            Frozen variables: <span id="frozen-count">0</span>
+                        </div>
+                        <div class="av-frozen-list" id="frozen-list">
+                            <h5>Frozen Variables (Select and press Backspace to unfreeze)</h5>
+                            <div id="frozen-items">No frozen variables</div>
                         </div>
                     </div>
                 </div>
@@ -278,64 +284,35 @@
             `;
         }
         
-        getDOMTabHTML() {
+        getExplorerTabHTML() {
             return `
-                <div class="av-tab-pane" data-tab="dom">
-                    <div class="av-toolbar">
-                        <button class="av-btn" id="refresh-dom">🔄 Refresh</button>
-                        <button class="av-btn" id="select-dom-element">🎯 Select Element</button>
-                        <button class="av-btn" id="highlight-element">💡 Highlight</button>
-                        <button class="av-btn" id="delete-element">🗑️ Delete</button>
-                        <button class="av-btn" id="clone-element">📋 Clone</button>
-                        <button class="av-btn" id="hide-element">👁️ Hide/Show</button>
-                        <input type="text" class="av-input" id="dom-search" placeholder="Search elements...">
-                    </div>
-                    <div class="av-dom-container">
-                        <div class="av-dom-tree" id="dom-tree">
-                            <div class="av-placeholder">Click 'Refresh' to analyze DOM structure</div>
+                <div class="av-tab-pane" data-tab="explorer">
+                    <div class="av-explorer-container">
+                        <div class="av-explorer-tree" id="explorer-tree">
+                            <div class="av-tree-node" data-path="window">
+                                <span class="av-tree-toggle">▶</span>
+                                <span class="av-tree-icon">🌐</span>
+                                <span class="av-tree-label">window</span>
+                            </div>
                         </div>
-                        <div class="av-dom-details" id="dom-details">
-                            <h4>Element Control Panel</h4>
-                            <div id="selected-element-info">No element selected</div>
-                            <div class="av-element-controls">
-                                <h5>Position & Size</h5>
-                                <div class="av-form-grid">
-                                    <div class="av-form-group">
-                                        <label>X:</label>
-                                        <input type="number" class="av-input" id="element-x" value="0">
-                                    </div>
-                                    <div class="av-form-group">
-                                        <label>Y:</label>
-                                        <input type="number" class="av-input" id="element-y" value="0">
-                                    </div>
-                                    <div class="av-form-group">
-                                        <label>Width:</label>
-                                        <input type="number" class="av-input" id="element-width" value="0">
-                                    </div>
-                                    <div class="av-form-group">
-                                        <label>Height:</label>
-                                        <input type="number" class="av-input" id="element-height" value="0">
-                                    </div>
+                        <div class="av-explorer-panels">
+                            <div class="av-explorer-panel">
+                                <div class="av-panel-header">
+                                    <h4>Variables</h4>
+                                    <button class="av-btn" id="load-variables">📥 Load All</button>
                                 </div>
-                                <button class="av-btn" id="apply-position">Apply Position</button>
-                                <button class="av-btn" id="apply-size">Apply Size</button>
-                                <h5>Style Modifications</h5>
-                                <div class="av-form-group">
-                                    <label>Background Color:</label>
-                                    <input type="color" class="av-input" id="element-bg-color" value="#ffffff">
-                                    <button class="av-btn" id="apply-bg-color">Apply</button>
+                                <div class="av-variable-list" id="variable-list">
+                                    <div class="av-placeholder">Select an object to view variables</div>
                                 </div>
-                                <div class="av-form-group">
-                                    <label>Border:</label>
-                                    <input type="text" class="av-input" id="element-border" placeholder="2px solid red">
-                                    <button class="av-btn" id="apply-border">Apply</button>
+                            </div>
+                            <div class="av-explorer-panel">
+                                <div class="av-panel-header">
+                                    <h4>Functions</h4>
+                                    <button class="av-btn" id="load-functions">📥 Load All</button>
                                 </div>
-                                <div class="av-form-group">
-                                    <label>Opacity:</label>
-                                    <input type="range" class="av-input" id="element-opacity" min="0" max="100" value="100">
-                                    <button class="av-btn" id="apply-opacity">Apply</button>
+                                <div class="av-function-list" id="function-list">
+                                    <div class="av-placeholder">Select an object to view functions</div>
                                 </div>
-                                <button class="av-btn" id="reset-styles">Reset Styles</button>
                             </div>
                         </div>
                     </div>
@@ -347,48 +324,19 @@
             return `
                 <div class="av-tab-pane" data-tab="anticheat">
                     <div class="av-toolbar">
-                        <button class="av-btn av-btn-primary" id="full-scan">🔍 Full Deep Scan</button>
-                        <button class="av-btn" id="stealth-scan">🥷 Stealth Scan</button>
-                        <button class="av-btn" id="network-scan">🌐 Network Scan</button>
-                        <button class="av-btn" id="memory-protection-scan">🧠 Memory Scan</button>
-                        <button class="av-btn" id="behavior-scan">🎭 Behavior Scan</button>
-                        <button class="av-btn" id="custom-scan">⚙️ Custom Scan</button>
+                        <button class="av-btn av-btn-primary" id="start-anticheat-scan">🔍 Start Scan</button>
+                        <button class="av-btn" id="quick-scan">⚡ Quick Scan</button>
+                        <button class="av-btn" id="advanced-scan">🎯 Advanced Scan</button>
                         <div class="av-score">
                             Risk Level: <span id="detection-score" class="score-low">0</span>/100
-                        </div>
-                    </div>
-                    <div class="av-scan-options">
-                        <h4>Scan Options</h4>
-                        <div class="av-checkbox-grid">
-                            <label class="av-checkbox-label"><input type="checkbox" id="scan-hooks" checked> Function Hooks</label>
-                            <label class="av-checkbox-label"><input type="checkbox" id="scan-console" checked> Console Detection</label>
-                            <label class="av-checkbox-label"><input type="checkbox" id="scan-devtools" checked> DevTools Detection</label>
-                            <label class="av-checkbox-label"><input type="checkbox" id="scan-debugger" checked> Debugger Protection</label>
-                            <label class="av-checkbox-label"><input type="checkbox" id="scan-timing" checked> Timing Attacks</label>
-                            <label class="av-checkbox-label"><input type="checkbox" id="scan-network" checked> Network Monitoring</label>
-                            <label class="av-checkbox-label"><input type="checkbox" id="scan-memory" checked> Memory Protection</label>
-                            <label class="av-checkbox-label"><input type="checkbox" id="scan-behavior" checked> Behavior Analysis</label>
-                            <label class="av-checkbox-label"><input type="checkbox" id="scan-obfuscation" checked> Code Obfuscation</label>
-                            <label class="av-checkbox-label"><input type="checkbox" id="scan-integrity" checked> Integrity Checks</label>
-                            <label class="av-checkbox-label"><input type="checkbox" id="scan-automation" checked> Anti-Automation</label>
-                            <label class="av-checkbox-label"><input type="checkbox" id="scan-fingerprint" checked> Browser Fingerprinting</label>
                         </div>
                     </div>
                     <div class="av-scan-progress" id="anticheat-progress" style="display: none;">
                         <div class="av-progress" id="ac-scan-progress"></div>
                         <div id="scan-status">Initializing scan...</div>
                     </div>
-                    <div class="av-bypass-tools">
-                        <h4>Bypass Tools</h4>
-                        <button class="av-btn" id="disable-console-log">Disable Console Logging</button>
-                        <button class="av-btn" id="bypass-debugger">Bypass Debugger</button>
-                        <button class="av-btn" id="hook-functions">Hook Common Functions</button>
-                        <button class="av-btn" id="spoof-user-agent">Spoof User Agent</button>
-                        <button class="av-btn" id="disable-right-click">Enable Right Click</button>
-                        <button class="av-btn" id="remove-key-listeners">Remove Key Listeners</button>
-                    </div>
                     <div class="av-scan-results" id="anticheat-results">
-                        <div class="av-placeholder">Select scan options and click a scan button to analyze anti-cheat mechanisms</div>
+                        <div class="av-placeholder">Click 'Start Scan' to analyze anti-cheat mechanisms</div>
                     </div>
                 </div>
             `;
@@ -405,6 +353,7 @@
                             <button class="av-btn av-btn-success" id="play-macro">▶ Play Macro</button>
                             <button class="av-btn" id="save-macro">💾 Save</button>
                             <button class="av-btn" id="load-macro">📁 Load</button>
+                            <button class="av-btn" id="clear-macro">🗑️ Clear</button>
                         </div>
                         <div class="av-status">
                             Status: <span id="recording-status">Ready</span> | 
@@ -437,62 +386,38 @@
             `;
         }
         
-        getPerformanceTabHTML() {
+        getNetworkTabHTML() {
             return `
-                <div class="av-tab-pane" data-tab="performance">
+                <div class="av-tab-pane" data-tab="network">
                     <div class="av-toolbar">
-                        <button class="av-btn" id="start-monitoring">▶ Start Monitor</button>
-                        <button class="av-btn" id="stop-monitoring">⏹ Stop Monitor</button>
-                        <button class="av-btn" id="export-perf">📥 Export Data</button>
-                        <label class="av-checkbox-label">
-                            <input type="checkbox" id="log-everything"> Log Everything
-                        </label>
+                        <button class="av-btn" id="light-monitor">🟢 Light Scan</button>
+                        <button class="av-btn" id="medium-monitor">🟡 Medium Scan</button>
+                        <button class="av-btn" id="deep-monitor">🔴 Deep Scan</button>
+                        <button class="av-btn" id="stop-monitor">⏹ Stop Monitor</button>
+                        <span class="av-status">Status: <span id="monitor-status">Stopped</span></span>
                     </div>
-                    <div class="av-stats-grid">
-                        <div class="av-stat-card">
-                            <label>Frame Rate:</label>
-                            <span id="fps-counter" class="stat-value">-- FPS</span>
+                    <div class="av-monitor-info">
+                        <div class="av-info-card">
+                            <h4>Light Scan</h4>
+                            <p>Monitors variable changes only</p>
                         </div>
-                        <div class="av-stat-card">
-                            <label>Memory Usage:</label>
-                            <span id="memory-usage" class="stat-value">-- MB</span>
+                        <div class="av-info-card">
+                            <h4>Medium Scan</h4>
+                            <p>Function calls, variable changes, element clicks</p>
                         </div>
-                        <div class="av-stat-card">
-                            <label>CPU Usage:</label>
-                            <span id="cpu-usage" class="stat-value">-- %</span>
-                        </div>
-                        <div class="av-stat-card">
-                            <label>Network Usage:</label>
-                            <span id="network-usage" class="stat-value">-- KB/s</span>
-                        </div>
-                        <div class="av-stat-card">
-                            <label>Active Timers:</label>
-                            <span id="timer-count" class="stat-value">--</span>
-                        </div>
-                        <div class="av-stat-card">
-                            <label>DOM Nodes:</label>
-                            <span id="dom-count" class="stat-value">--</span>
-                        </div>
-                        <div class="av-stat-card">
-                            <label>Event Listeners:</label>
-                            <span id="listener-count" class="stat-value">--</span>
-                        </div>
-                        <div class="av-stat-card">
-                            <label>Local Storage:</label>
-                            <span id="storage-usage" class="stat-value">-- KB</span>
+                        <div class="av-info-card">
+                            <h4>Deep Scan</h4>
+                            <p>Logs everything possible (performance impact)</p>
                         </div>
                     </div>
-                    <div class="av-section">
-                        <h3>🌐 System Information</h3>
-                        <div class="av-info-grid" id="system-info">
-                            <div>Loading system information...</div>
-                        </div>
+                    <div class="av-network-stats">
+                        <div class="av-stat-item">Variables Changed: <span id="var-changes">0</span></div>
+                        <div class="av-stat-item">Functions Called: <span id="func-calls">0</span></div>
+                        <div class="av-stat-item">Elements Clicked: <span id="elem-clicks">0</span></div>
+                        <div class="av-stat-item">Network Requests: <span id="net-requests">0</span></div>
                     </div>
-                    <div class="av-section">
-                        <h3>📊 Event Monitor</h3>
-                        <div class="av-event-monitor" id="event-monitor">
-                            <div class="av-placeholder">Enable 'Log Everything' to see events</div>
-                        </div>
+                    <div class="av-monitor-output" id="monitor-output">
+                        <div class="av-placeholder">Select a monitoring level to see activity</div>
                     </div>
                 </div>
             `;
@@ -507,20 +432,20 @@
                             <button class="av-btn" id="disable-ads">🚫 Block Ads</button>
                             <button class="av-btn" id="enable-copy">📋 Enable Copy/Paste</button>
                             <button class="av-btn" id="remove-overlays">❌ Remove Overlays</button>
-                            <button class="av-btn" id="highlight-clickable">🎯 Highlight Clickable</button>
                             <button class="av-btn" id="show-passwords">👁️ Show Passwords</button>
                             <button class="av-btn" id="disable-redirects">🔗 Disable Redirects</button>
+                            <button class="av-btn" id="enable-rightclick">🖱️ Enable Right Click</button>
                         </div>
                     </div>
                     <div class="av-section">
                         <h3>🎮 Game Cheats</h3>
                         <div class="av-controls">
-                            <button class="av-btn" id="god-mode">🛡️ God Mode Scanner</button>
+                            <button class="av-btn" id="god-mode">🛡️ Find God Mode</button>
                             <button class="av-btn" id="speed-hack">⚡ Speed Multiplier</button>
-                            <button class="av-btn" id="no-clip">👻 No Clip Mode</button>
-                            <button class="av-btn" id="auto-complete">🏆 Auto Complete</button>
-                            <button class="av-btn" id="unlock-all">🔓 Unlock Everything</button>
+                            <button class="av-btn" id="unlock-all">🔓 Unlock All</button>
                             <button class="av-btn" id="infinite-resources">♾️ Infinite Resources</button>
+                            <button class="av-btn" id="max-level">📈 Max Level</button>
+                            <button class="av-btn" id="complete-game">🏆 Complete Game</button>
                         </div>
                         <div class="av-form-group">
                             <label>Speed Multiplier:</label>
@@ -529,52 +454,25 @@
                         </div>
                     </div>
                     <div class="av-section">
-                        <h3>🌐 Network Tools</h3>
-                        <div class="av-controls">
-                            <button class="av-btn" id="intercept-requests">📡 Intercept Requests</button>
-                            <button class="av-btn" id="modify-responses">🔧 Modify Responses</button>
-                            <button class="av-btn" id="fake-offline">📴 Fake Offline</button>
-                            <button class="av-btn" id="block-analytics">📊 Block Analytics</button>
-                            <button class="av-btn" id="spoof-location">📍 Spoof Location</button>
-                        </div>
-                        <div id="network-log">
-                            <h5>Network Activity</h5>
-                            <div class="av-placeholder">Enable request interception to see network activity</div>
-                        </div>
-                    </div>
-                    <div class="av-section">
-                        <h3>🔍 Advanced Analysis</h3>
-                        <div class="av-controls">
-                            <button class="av-btn" id="find-secrets">🔑 Find API Keys</button>
-                            <button class="av-btn" id="extract-tokens">🎫 Extract Tokens</button>
-                            <button class="av-btn" id="dump-localStorage">💾 Dump Storage</button>
-                            <button class="av-btn" id="analyze-cookies">🍪 Analyze Cookies</button>
-                            <button class="av-btn" id="find-vulnerabilities">⚠️ Find Vulnerabilities</button>
-                        </div>
-                    </div>
-                    <div class="av-section">
                         <h3>🎨 Visual Enhancements</h3>
                         <div class="av-controls">
                             <button class="av-btn" id="dark-mode">🌙 Toggle Dark Mode</button>
-                            <button class="av-btn" id="zoom-page">🔍 Zoom Controls</button>
-                            <button class="av-btn" id="fullscreen-any">📺 Fullscreen Any Element</button>
                             <button class="av-btn" id="remove-animations">⏸️ Disable Animations</button>
-                            <button class="av-btn" id="custom-css">🎨 Inject Custom CSS</button>
-                        </div>
-                        <div class="av-form-group">
-                            <label>Custom CSS:</label>
-                            <textarea class="av-input" id="custom-css-input" placeholder="body { background: red !important; }" rows="3"></textarea>
-                            <button class="av-btn" id="apply-css">Apply CSS</button>
+                            <button class="av-btn" id="zoom-in">🔍➕ Zoom In</button>
+                            <button class="av-btn" id="zoom-out">🔍➖ Zoom Out</button>
+                            <button class="av-btn" id="fullscreen">📺 Fullscreen</button>
+                            <button class="av-btn" id="highlight-clickable">🎯 Highlight Clickable</button>
                         </div>
                     </div>
                     <div class="av-section">
-                        <h3>⚡ Performance Tweaks</h3>
+                        <h3>⚡ Performance</h3>
                         <div class="av-controls">
-                            <button class="av-btn" id="boost-performance">🚀 Performance Boost</button>
-                            <button class="av-btn" id="reduce-quality">📉 Reduce Quality</button>
+                            <button class="av-btn" id="boost-performance">🚀 Boost Performance</button>
                             <button class="av-btn" id="disable-sounds">🔇 Disable Sounds</button>
-                            <button class="av-btn" id="limit-fps">⏱️ Limit FPS</button>
+                            <button class="av-btn" id="reduce-quality">📉 Reduce Quality</button>
                             <button class="av-btn" id="clear-cache">🗑️ Clear Cache</button>
+                            <button class="av-btn" id="stop-all-timers">⏱️ Stop All Timers</button>
+                            <button class="av-btn" id="pause-game">⏸️ Pause Game</button>
                         </div>
                     </div>
                 </div>
@@ -592,17 +490,17 @@
                             <option value="error">Error</option>
                             <option value="scan">Scan Results</option>
                             <option value="cheat">Cheat Activity</option>
+                            <option value="gui">GUI Actions</option>
                         </select>
                         <button class="av-btn" id="clear-logs">🗑️ Clear</button>
                         <button class="av-btn" id="export-logs">📥 Export</button>
-                        <button class="av-btn" id="import-logs">📤 Import</button>
                         <button class="av-btn" id="auto-scroll-logs">📜 Auto Scroll</button>
                     </div>
                     <div class="av-log-stats">
                         Total: <span id="total-logs">0</span> | 
                         Errors: <span id="error-logs">0</span> | 
                         Warnings: <span id="warning-logs">0</span> |
-                        Cheats: <span id="cheat-logs">0</span>
+                        GUI Actions: <span id="gui-logs">0</span>
                     </div>
                     <div class="av-log-container" id="log-container">
                         <div class="av-placeholder">No logs yet</div>
@@ -613,7 +511,7 @@
         
         getCSS() {
             return `
-                #anticheat-tester-gui {
+                #toxivids-cheat-engine {
                     position: fixed;
                     z-index: 999999;
                     font-family: 'Consolas', 'Monaco', monospace;
@@ -671,6 +569,14 @@
                     background: #555;
                     border-color: #777;
                     transform: translateY(-1px);
+                }
+                
+                .av-btn:disabled {
+                    background: #333;
+                    border-color: #444;
+                    color: #666;
+                    cursor: not-allowed;
+                    transform: none;
                 }
                 
                 .av-btn-primary {
@@ -806,13 +712,13 @@
                     border-radius: 3px;
                 }
                 
-                .av-memory-container, .av-dom-container {
+                .av-memory-container {
                     display: flex;
                     gap: 12px;
                     flex: 1;
                 }
                 
-                .av-results, .av-dom-tree {
+                .av-results {
                     flex: 1;
                     background: #1a1a1a;
                     border: 1px solid #444;
@@ -822,7 +728,7 @@
                     max-height: 400px;
                 }
                 
-                .av-memory-details, .av-dom-details {
+                .av-memory-details {
                     width: 350px;
                     background: #1a1a1a;
                     border: 1px solid #444;
@@ -895,6 +801,12 @@
                     margin-top: 8px;
                 }
                 
+                .av-frozen-list {
+                    margin-top: 12px;
+                    padding-top: 8px;
+                    border-top: 1px solid #444;
+                }
+                
                 .av-section {
                     background: #2a2a2a;
                     border: 1px solid #444;
@@ -957,79 +869,119 @@
                     font-size: 11px;
                 }
                 
-                .av-stats-grid {
-                    display: grid;
-                    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+                .av-explorer-container {
+                    display: flex;
+                    flex-direction: column;
+                    height: 100%;
+                }
+                
+                .av-explorer-tree {
+                    background: #1a1a1a;
+                    border: 1px solid #444;
+                    border-radius: 4px;
+                    padding: 8px;
+                    margin-bottom: 12px;
+                    max-height: 300px;
+                    overflow-y: auto;
+                }
+                
+                .av-tree-node {
+                    display: flex;
+                    align-items: center;
+                    gap: 4px;
+                    padding: 2px 0;
+                    cursor: pointer;
+                    font-size: 11px;
+                }
+                
+                .av-tree-node:hover {
+                    background: #333;
+                }
+                
+                .av-tree-toggle {
+                    width: 12px;
+                    text-align: center;
+                    user-select: none;
+                }
+                
+                .av-tree-icon {
+                    font-size: 12px;
+                }
+                
+                .av-tree-label {
+                    flex: 1;
+                }
+                
+                .av-explorer-panels {
+                    display: flex;
+                    gap: 12px;
+                    flex: 1;
+                }
+                
+                .av-explorer-panel {
+                    flex: 1;
+                    background: #1a1a1a;
+                    border: 1px solid #444;
+                    border-radius: 4px;
+                    display: flex;
+                    flex-direction: column;
+                }
+                
+                .av-panel-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    padding: 8px;
+                    border-bottom: 1px solid #444;
+                    background: #2a2a2a;
+                }
+                
+                .av-variable-list, .av-function-list {
+                    flex: 1;
+                    padding: 8px;
+                    overflow-y: auto;
+                    max-height: 300px;
+                }
+                
+                .av-monitor-info {
+                    display: flex;
                     gap: 8px;
                     margin-bottom: 12px;
                 }
                 
-                .av-stat-card {
-                    background: #333;
-                    border: 1px solid #555;
+                .av-info-card {
+                    flex: 1;
+                    background: #2a2a2a;
+                    border: 1px solid #444;
                     border-radius: 4px;
                     padding: 8px;
                     text-align: center;
                 }
                 
-                .stat-value {
-                    color: #0088ff;
-                    font-weight: bold;
-                    font-size: 12px;
-                    display: block;
-                    margin-top: 4px;
-                }
-                
-                .av-scan-options {
-                    background: #2a2a2a;
-                    padding: 8px;
-                    border-radius: 4px;
+                .av-network-stats {
+                    display: flex;
+                    gap: 12px;
                     margin-bottom: 12px;
+                    flex-wrap: wrap;
                 }
                 
-                .av-checkbox-grid {
-                    display: grid;
-                    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-                    gap: 4px;
-                    margin-top: 8px;
-                }
-                
-                .av-bypass-tools {
-                    background: #2a2a2a;
-                    padding: 8px;
+                .av-stat-item {
+                    background: #333;
+                    padding: 6px 12px;
                     border-radius: 4px;
-                    margin-bottom: 12px;
+                    font-size: 11px;
                 }
                 
-                .av-bypass-tools .av-controls {
-                    margin-bottom: 0;
-                }
-                
-                .av-info-grid {
-                    display: grid;
-                    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-                    gap: 8px;
-                    font-size: 10px;
-                }
-                
-                .av-event-monitor {
+                .av-monitor-output {
+                    flex: 1;
                     background: #1a1a1a;
                     border: 1px solid #444;
                     border-radius: 4px;
                     padding: 8px;
-                    max-height: 200px;
                     overflow-y: auto;
+                    max-height: 300px;
+                    font-family: 'Courier New', monospace;
                     font-size: 10px;
-                }
-                
-                .av-element-controls {
-                    margin-top: 12px;
-                }
-                
-                .av-selected-list {
-                    margin-top: 12px;
-                    padding-top: 8px;
-                    border-top: 1px solid #444;
                 }
                 
                 .av-log-container {
@@ -1057,6 +1009,7 @@
                 .av-log-item.error { border-left-color: #ff0000; }
                 .av-log-item.scan { border-left-color: #00ff00; }
                 .av-log-item.cheat { border-left-color: #ff00ff; }
+                .av-log-item.gui { border-left-color: #00ffff; }
                 
                 .av-resize-handle {
                     position: absolute;
@@ -1072,31 +1025,6 @@
                 .score-medium { color: #ffaa00; }
                 .score-high { color: #ff0000; }
                 
-                .av-score {
-                    background: #333;
-                    padding: 4px 8px;
-                    border-radius: 4px;
-                    font-weight: bold;
-                }
-                
-                hr {
-                    border: none;
-                    border-top: 1px solid #444;
-                    margin: 12px 0;
-                }
-                
-                input[type="range"] {
-                    width: 100%;
-                }
-                
-                input[type="color"] {
-                    width: 40px;
-                    height: 25px;
-                    padding: 0;
-                    border: none;
-                    border-radius: 4px;
-                }
-                
                 .av-macro-list {
                     background: #1a1a1a;
                     border: 1px solid #444;
@@ -1106,83 +1034,16 @@
                     overflow-y: auto;
                     font-size: 10px;
                 }
+                
+                hr {
+                    border: none;
+                    border-top: 1px solid #444;
+                    margin: 12px 0;
+                }
             `;
         }
         
-        setupEventLogging() {
-            if (this.logEverything) {
-                // Override common functions to log their usage
-                const originalSetTimeout = window.setTimeout;
-                window.setTimeout = (...args) => {
-                    this.logEvent('setTimeout called', args);
-                    return originalSetTimeout.apply(window, args);
-                };
-                
-                // Log property changes
-                this.setupPropertyWatching();
-            }
-        }
-        
-        setupPropertyWatching() {
-            // Watch for common game variables
-            const commonVars = ['score', 'money', 'coins', 'health', 'level', 'lives'];
-            commonVars.forEach(varName => {
-                if (window[varName] !== undefined) {
-                    this.watchVariable(varName);
-                }
-            });
-        }
-        
-        watchVariable(path) {
-            try {
-                const obj = this.getObjectFromPath(path);
-                const prop = path.split('.').pop();
-                const parent = path.includes('.') ? this.getObjectFromPath(path.substring(0, path.lastIndexOf('.'))) : window;
-                
-                if (parent && prop) {
-                    let currentValue = parent[prop];
-                    Object.defineProperty(parent, prop, {
-                        get: () => currentValue,
-                        set: (newValue) => {
-                            this.logEvent('Variable changed', { path, oldValue: currentValue, newValue });
-                            currentValue = newValue;
-                        }
-                    });
-                }
-            } catch (e) {
-                this.addLog('error', 'Failed to watch variable: ' + path);
-            }
-        }
-        
-        getObjectFromPath(path) {
-            return path.split('.').reduce((obj, prop) => obj && obj[prop], window);
-        }
-        
-        logEvent(type, data) {
-            if (this.logEverything) {
-                this.eventLogger.push({
-                    timestamp: Date.now(),
-                    type: type,
-                    data: data
-                });
-                this.updateEventMonitor();
-            }
-        }
-        
-        updateEventMonitor() {
-            const monitor = this.container.querySelector('#event-monitor');
-            if (monitor && this.eventLogger.length > 0) {
-                const recent = this.eventLogger.slice(-50);
-                monitor.innerHTML = recent.map(event => 
-                    `<div class="av-log-item">[${new Date(event.timestamp).toLocaleTimeString()}] ${event.type}: ${JSON.stringify(event.data).substring(0, 100)}</div>`
-                ).join('');
-                monitor.scrollTop = monitor.scrollHeight;
-            }
-        }
-        
-        // Continue with all the other methods from the previous implementation
-        // but with enhanced functionality for each feature...
-        
+        // Bind Events
         bindEvents() {
             this.bindDragEvents();
             this.bindResizeEvents();
@@ -1197,6 +1058,7 @@
                 if (clickerHotkey && e.key.toLowerCase() === clickerHotkey.toLowerCase()) {
                     e.preventDefault();
                     this.toggleAutoclicker();
+                    this.logGUIAction('Hotkey pressed: ' + clickerHotkey);
                 }
                 
                 // Handle backspace for removing selected items
@@ -1204,9 +1066,8 @@
                     this.removeSelectedMemoryItem();
                 }
                 
-                // Log everything if enabled
-                if (this.logEverything) {
-                    this.logEvent('keydown', { key: e.key, code: e.code });
+                if (e.key === 'Backspace' && this.activeTab === 'console') {
+                    this.removeSelectedFrozenVar();
                 }
             });
             
@@ -1276,14 +1137,21 @@
         }
         
         bindWindowEvents() {
-            this.container.querySelector('.av-close').addEventListener('click', () => this.hide());
-            this.container.querySelector('.av-minimize').addEventListener('click', () => this.minimize());
+            this.container.querySelector('.av-close').addEventListener('click', () => {
+                this.logGUIAction('Close button clicked');
+                this.hide();
+            });
+            this.container.querySelector('.av-minimize').addEventListener('click', () => {
+                this.logGUIAction('Minimize button clicked');
+                this.minimize();
+            });
         }
         
         bindTabEvents() {
             const tabs = this.container.querySelectorAll('.av-tab');
             tabs.forEach(tab => {
                 tab.addEventListener('click', () => {
+                    this.logGUIAction('Tab switched to: ' + tab.dataset.tab);
                     this.switchTab(tab.dataset.tab);
                 });
             });
@@ -1291,307 +1159,367 @@
         
         bindUIEvents() {
             // Memory Scanner Events
-            const startScanBtn = this.container.querySelector('#start-scan');
-            if (startScanBtn) startScanBtn.addEventListener('click', () => this.performMemoryScan());
+            const firstScanBtn = this.container.querySelector('#first-scan');
+            if (firstScanBtn) firstScanBtn.addEventListener('click', () => {
+                this.logGUIAction('First scan button clicked');
+                this.performFirstScan();
+            });
+            
+            const nextScanBtn = this.container.querySelector('#next-scan');
+            if (nextScanBtn) nextScanBtn.addEventListener('click', () => {
+                this.logGUIAction('Next scan button clicked');
+                this.performNextScan();
+            });
             
             const clearResultsBtn = this.container.querySelector('#clear-results');
-            if (clearResultsBtn) clearResultsBtn.addEventListener('click', () => this.clearMemoryResults());
-            
-            const exportResultsBtn = this.container.querySelector('#export-results');
-            if (exportResultsBtn) exportResultsBtn.addEventListener('click', () => this.exportMemoryResults());
+            if (clearResultsBtn) clearResultsBtn.addEventListener('click', () => {
+                this.logGUIAction('Clear results button clicked');
+                this.clearMemoryResults();
+            });
             
             // Console Events
             const executeBtn = this.container.querySelector('#execute-js');
-            if (executeBtn) executeBtn.addEventListener('click', () => this.executeJavaScript());
+            if (executeBtn) executeBtn.addEventListener('click', () => {
+                this.logGUIAction('Execute JavaScript button clicked');
+                this.executeJavaScript();
+            });
             
             const clearConsoleBtn = this.container.querySelector('#clear-console');
-            if (clearConsoleBtn) clearConsoleBtn.addEventListener('click', () => this.clearConsole());
+            if (clearConsoleBtn) clearConsoleBtn.addEventListener('click', () => {
+                this.logGUIAction('Clear console button clicked');
+                this.clearConsole();
+            });
             
             const freezeBtn = this.container.querySelector('#freeze-value');
-            if (freezeBtn) freezeBtn.addEventListener('click', () => this.freezeValue());
+            if (freezeBtn) freezeBtn.addEventListener('click', () => {
+                this.logGUIAction('Freeze value button clicked');
+                this.freezeValue();
+            });
             
             const setInfiniteBtn = this.container.querySelector('#set-infinite');
-            if (setInfiniteBtn) setInfiniteBtn.addEventListener('click', () => this.setInfinite());
+            if (setInfiniteBtn) setInfiniteBtn.addEventListener('click', () => {
+                this.logGUIAction('Set infinite button clicked');
+                this.setInfinite();
+            });
             
             const resetZeroBtn = this.container.querySelector('#reset-zero');
-            if (resetZeroBtn) resetZeroBtn.addEventListener('click', () => this.resetToZero());
+            if (resetZeroBtn) resetZeroBtn.addEventListener('click', () => {
+                this.logGUIAction('Reset to zero button clicked');
+                this.resetToZero();
+            });
             
             const incrementBtn = this.container.querySelector('#increment-value');
-            if (incrementBtn) incrementBtn.addEventListener('click', () => this.incrementValue());
+            if (incrementBtn) incrementBtn.addEventListener('click', () => {
+                this.logGUIAction('Increment value button clicked');
+                this.incrementValue();
+            });
             
             const decrementBtn = this.container.querySelector('#decrement-value');
-            if (decrementBtn) decrementBtn.addEventListener('click', () => this.decrementValue());
+            if (decrementBtn) decrementBtn.addEventListener('click', () => {
+                this.logGUIAction('Decrement value button clicked');
+                this.decrementValue();
+            });
             
             const multiplyBtn = this.container.querySelector('#multiply-value');
-            if (multiplyBtn) multiplyBtn.addEventListener('click', () => this.multiplyValue());
+            if (multiplyBtn) multiplyBtn.addEventListener('click', () => {
+                this.logGUIAction('Multiply value button clicked');
+                this.multiplyValue();
+            });
             
             const getValueBtn = this.container.querySelector('#get-value');
-            if (getValueBtn) getValueBtn.addEventListener('click', () => this.getValue());
+            if (getValueBtn) getValueBtn.addEventListener('click', () => {
+                this.logGUIAction('Get value button clicked');
+                this.getValue();
+            });
             
-            const watchValueBtn = this.container.querySelector('#watch-value');
-            if (watchValueBtn) watchValueBtn.addEventListener('click', () => this.watchValue());
+            const unfreezeAllBtn = this.container.querySelector('#unfreeze-all');
+            if (unfreezeAllBtn) unfreezeAllBtn.addEventListener('click', () => {
+                this.logGUIAction('Unfreeze all button clicked');
+                this.unfreezeAllVariables();
+            });
             
             // Autoclicker Events
             const startClickerBtn = this.container.querySelector('#start-clicker');
-            if (startClickerBtn) startClickerBtn.addEventListener('click', () => this.startAutoclicker());
+            if (startClickerBtn) startClickerBtn.addEventListener('click', () => {
+                this.logGUIAction('Start autoclicker button clicked');
+                this.startAutoclicker();
+            });
             
             const stopClickerBtn = this.container.querySelector('#stop-clicker');
-            if (stopClickerBtn) stopClickerBtn.addEventListener('click', () => this.stopAutoclicker());
+            if (stopClickerBtn) stopClickerBtn.addEventListener('click', () => {
+                this.logGUIAction('Stop autoclicker button clicked');
+                this.stopAutoclicker();
+            });
             
             const selectElementBtn = this.container.querySelector('#select-element');
-            if (selectElementBtn) selectElementBtn.addEventListener('click', () => this.selectElement());
+            if (selectElementBtn) selectElementBtn.addEventListener('click', () => {
+                this.logGUIAction('Select element button clicked');
+                this.selectElement();
+            });
             
             const getMousePosBtn = this.container.querySelector('#get-mouse-pos');
-            if (getMousePosBtn) getMousePosBtn.addEventListener('click', () => this.getMousePosition());
-            
-            const setCoordinatesBtn = this.container.querySelector('#set-coordinates');
-            if (setCoordinatesBtn) setCoordinatesBtn.addEventListener('click', () => this.setClickCoordinates());
+            if (getMousePosBtn) getMousePosBtn.addEventListener('click', () => {
+                this.logGUIAction('Get mouse position button clicked');
+                this.getMousePosition();
+            });
             
             // Key Spammer Events
             const startSpamBtn = this.container.querySelector('#start-spam');
-            if (startSpamBtn) startSpamBtn.addEventListener('click', () => this.startKeySpammer());
+            if (startSpamBtn) startSpamBtn.addEventListener('click', () => {
+                this.logGUIAction('Start key spam button clicked');
+                this.startKeySpammer();
+            });
             
             const stopSpamBtn = this.container.querySelector('#stop-spam');
-            if (stopSpamBtn) stopSpamBtn.addEventListener('click', () => this.stopKeySpammer());
+            if (stopSpamBtn) stopSpamBtn.addEventListener('click', () => {
+                this.logGUIAction('Stop key spam button clicked');
+                this.stopKeySpammer();
+            });
             
             const sendKeyBtn = this.container.querySelector('#send-key');
-            if (sendKeyBtn) sendKeyBtn.addEventListener('click', () => this.sendSingleKey());
+            if (sendKeyBtn) sendKeyBtn.addEventListener('click', () => {
+                this.logGUIAction('Send single key button clicked');
+                this.sendSingleKey();
+            });
             
-            // Continue binding all other UI events...
-            this.bindDOMEvents();
-            this.bindAntiCheatEvents();
-            this.bindPerformanceEvents();
+            // Explorer Events
+            this.bindExplorerEvents();
+            
+            // Anti-cheat Events
+            const antiCheatScanBtn = this.container.querySelector('#start-anticheat-scan');
+            if (antiCheatScanBtn) antiCheatScanBtn.addEventListener('click', () => {
+                this.logGUIAction('Anti-cheat scan button clicked');
+                this.startAntiCheatScan();
+            });
+            
+            // Macro Events
+            const startRecordingBtn = this.container.querySelector('#start-recording');
+            if (startRecordingBtn) startRecordingBtn.addEventListener('click', () => {
+                this.logGUIAction('Start recording button clicked');
+                this.startRecording();
+            });
+            
+            const stopRecordingBtn = this.container.querySelector('#stop-recording');
+            if (stopRecordingBtn) stopRecordingBtn.addEventListener('click', () => {
+                this.logGUIAction('Stop recording button clicked');
+                this.stopRecording();
+            });
+            
+            const playMacroBtn = this.container.querySelector('#play-macro');
+            if (playMacroBtn) playMacroBtn.addEventListener('click', () => {
+                this.logGUIAction('Play macro button clicked');
+                this.playMacro();
+            });
+            
+            const clearMacroBtn = this.container.querySelector('#clear-macro');
+            if (clearMacroBtn) clearMacroBtn.addEventListener('click', () => {
+                this.logGUIAction('Clear macro button clicked');
+                this.clearMacro();
+            });
+            
+            // Network Events
+            const lightMonitorBtn = this.container.querySelector('#light-monitor');
+            if (lightMonitorBtn) lightMonitorBtn.addEventListener('click', () => {
+                this.logGUIAction('Light monitor button clicked');
+                this.startLightMonitor();
+            });
+            
+            const mediumMonitorBtn = this.container.querySelector('#medium-monitor');
+            if (mediumMonitorBtn) mediumMonitorBtn.addEventListener('click', () => {
+                this.logGUIAction('Medium monitor button clicked');
+                this.startMediumMonitor();
+            });
+            
+            const deepMonitorBtn = this.container.querySelector('#deep-monitor');
+            if (deepMonitorBtn) deepMonitorBtn.addEventListener('click', () => {
+                this.logGUIAction('Deep monitor button clicked');
+                this.startDeepMonitor();
+            });
+            
+            const stopMonitorBtn = this.container.querySelector('#stop-monitor');
+            if (stopMonitorBtn) stopMonitorBtn.addEventListener('click', () => {
+                this.logGUIAction('Stop monitor button clicked');
+                this.stopMonitoring();
+            });
+            
+            // Extra tab events
             this.bindExtraEvents();
-            this.bindLogEvents();
+            
+            // Log events
+            const clearLogsBtn = this.container.querySelector('#clear-logs');
+            if (clearLogsBtn) clearLogsBtn.addEventListener('click', () => {
+                this.logGUIAction('Clear logs button clicked');
+                this.clearLogs();
+            });
         }
         
-        bindDOMEvents() {
-            const refreshDOMBtn = this.container.querySelector('#refresh-dom');
-            if (refreshDOMBtn) refreshDOMBtn.addEventListener('click', () => this.refreshDOM());
-            
-            const selectDOMBtn = this.container.querySelector('#select-dom-element');
-            if (selectDOMBtn) selectDOMBtn.addEventListener('click', () => this.selectDOMElement());
-            
-            const highlightBtn = this.container.querySelector('#highlight-element');
-            if (highlightBtn) highlightBtn.addEventListener('click', () => this.highlightElement());
-            
-            const deleteBtn = this.container.querySelector('#delete-element');
-            if (deleteBtn) deleteBtn.addEventListener('click', () => this.deleteElement());
-            
-            const cloneBtn = this.container.querySelector('#clone-element');
-            if (cloneBtn) cloneBtn.addEventListener('click', () => this.cloneElement());
-            
-            const hideBtn = this.container.querySelector('#hide-element');
-            if (hideBtn) hideBtn.addEventListener('click', () => this.toggleElementVisibility());
-            
-            const applyPositionBtn = this.container.querySelector('#apply-position');
-            if (applyPositionBtn) applyPositionBtn.addEventListener('click', () => this.applyElementPosition());
-            
-            const applySizeBtn = this.container.querySelector('#apply-size');
-            if (applySizeBtn) applySizeBtn.addEventListener('click', () => this.applyElementSize());
-            
-            const applyBgColorBtn = this.container.querySelector('#apply-bg-color');
-            if (applyBgColorBtn) applyBgColorBtn.addEventListener('click', () => this.applyBackgroundColor());
-            
-            const applyBorderBtn = this.container.querySelector('#apply-border');
-            if (applyBorderBtn) applyBorderBtn.addEventListener('click', () => this.applyBorder());
-            
-            const applyOpacityBtn = this.container.querySelector('#apply-opacity');
-            if (applyOpacityBtn) applyOpacityBtn.addEventListener('click', () => this.applyOpacity());
-            
-            const resetStylesBtn = this.container.querySelector('#reset-styles');
-            if (resetStylesBtn) resetStylesBtn.addEventListener('click', () => this.resetElementStyles());
-        }
-        
-        bindAntiCheatEvents() {
-            const fullScanBtn = this.container.querySelector('#full-scan');
-            if (fullScanBtn) fullScanBtn.addEventListener('click', () => this.startFullScan());
-            
-            const stealthScanBtn = this.container.querySelector('#stealth-scan');
-            if (stealthScanBtn) stealthScanBtn.addEventListener('click', () => this.startStealthScan());
-            
-            const networkScanBtn = this.container.querySelector('#network-scan');
-            if (networkScanBtn) networkScanBtn.addEventListener('click', () => this.startNetworkScan());
-            
-            const memoryScanBtn = this.container.querySelector('#memory-protection-scan');
-            if (memoryScanBtn) memoryScanBtn.addEventListener('click', () => this.startMemoryProtectionScan());
-            
-            const behaviorScanBtn = this.container.querySelector('#behavior-scan');
-            if (behaviorScanBtn) behaviorScanBtn.addEventListener('click', () => this.startBehaviorScan());
-            
-            const customScanBtn = this.container.querySelector('#custom-scan');
-            if (customScanBtn) customScanBtn.addEventListener('click', () => this.startCustomScan());
-            
-            // Bypass tools
-            const disableConsoleBtn = this.container.querySelector('#disable-console-log');
-            if (disableConsoleBtn) disableConsoleBtn.addEventListener('click', () => this.disableConsoleLogging());
-            
-            const bypassDebuggerBtn = this.container.querySelector('#bypass-debugger');
-            if (bypassDebuggerBtn) bypassDebuggerBtn.addEventListener('click', () => this.bypassDebugger());
-            
-            const hookFunctionsBtn = this.container.querySelector('#hook-functions');
-            if (hookFunctionsBtn) hookFunctionsBtn.addEventListener('click', () => this.hookCommonFunctions());
-            
-            const spoofUserAgentBtn = this.container.querySelector('#spoof-user-agent');
-            if (spoofUserAgentBtn) spoofUserAgentBtn.addEventListener('click', () => this.spoofUserAgent());
-            
-            const enableRightClickBtn = this.container.querySelector('#disable-right-click');
-            if (enableRightClickBtn) enableRightClickBtn.addEventListener('click', () => this.enableRightClick());
-            
-            const removeKeyListenersBtn = this.container.querySelector('#remove-key-listeners');
-            if (removeKeyListenersBtn) removeKeyListenersBtn.addEventListener('click', () => this.removeKeyListeners());
-        }
-        
-        bindPerformanceEvents() {
-            const startMonitoringBtn = this.container.querySelector('#start-monitoring');
-            if (startMonitoringBtn) startMonitoringBtn.addEventListener('click', () => this.startPerformanceMonitoring());
-            
-            const stopMonitoringBtn = this.container.querySelector('#stop-monitoring');
-            if (stopMonitoringBtn) stopMonitoringBtn.addEventListener('click', () => this.stopPerformanceMonitoring());
-            
-            const exportPerfBtn = this.container.querySelector('#export-perf');
-            if (exportPerfBtn) exportPerfBtn.addEventListener('click', () => this.exportPerformanceData());
-            
-            const logEverythingCheckbox = this.container.querySelector('#log-everything');
-            if (logEverythingCheckbox) {
-                logEverythingCheckbox.addEventListener('change', (e) => {
-                    this.logEverything = e.target.checked;
-                    if (this.logEverything) {
-                        this.setupEventLogging();
+        bindExplorerEvents() {
+            const explorerTree = this.container.querySelector('#explorer-tree');
+            if (explorerTree) {
+                explorerTree.addEventListener('click', (e) => {
+                    const node = e.target.closest('.av-tree-node');
+                    if (node) {
+                        this.logGUIAction('Explorer node clicked: ' + node.dataset.path);
+                        this.toggleExplorerNode(node);
                     }
                 });
             }
+            
+            const loadVariablesBtn = this.container.querySelector('#load-variables');
+            if (loadVariablesBtn) loadVariablesBtn.addEventListener('click', () => {
+                this.logGUIAction('Load variables button clicked');
+                this.loadAllVariables();
+            });
+            
+            const loadFunctionsBtn = this.container.querySelector('#load-functions');
+            if (loadFunctionsBtn) loadFunctionsBtn.addEventListener('click', () => {
+                this.logGUIAction('Load functions button clicked');
+                this.loadAllFunctions();
+            });
         }
         
         bindExtraEvents() {
             // Website manipulation
             const disableAdsBtn = this.container.querySelector('#disable-ads');
-            if (disableAdsBtn) disableAdsBtn.addEventListener('click', () => this.disableAds());
+            if (disableAdsBtn) disableAdsBtn.addEventListener('click', () => {
+                this.logGUIAction('Disable ads button clicked');
+                this.disableAds();
+            });
             
             const enableCopyBtn = this.container.querySelector('#enable-copy');
-            if (enableCopyBtn) enableCopyBtn.addEventListener('click', () => this.enableCopyPaste());
+            if (enableCopyBtn) enableCopyBtn.addEventListener('click', () => {
+                this.logGUIAction('Enable copy button clicked');
+                this.enableCopyPaste();
+            });
             
             const removeOverlaysBtn = this.container.querySelector('#remove-overlays');
-            if (removeOverlaysBtn) removeOverlaysBtn.addEventListener('click', () => this.removeOverlays());
-            
-            const highlightClickableBtn = this.container.querySelector('#highlight-clickable');
-            if (highlightClickableBtn) highlightClickableBtn.addEventListener('click', () => this.highlightClickableElements());
+            if (removeOverlaysBtn) removeOverlaysBtn.addEventListener('click', () => {
+                this.logGUIAction('Remove overlays button clicked');
+                this.removeOverlays();
+            });
             
             const showPasswordsBtn = this.container.querySelector('#show-passwords');
-            if (showPasswordsBtn) showPasswordsBtn.addEventListener('click', () => this.showPasswords());
+            if (showPasswordsBtn) showPasswordsBtn.addEventListener('click', () => {
+                this.logGUIAction('Show passwords button clicked');
+                this.showPasswords();
+            });
             
-            const disableRedirectsBtn = this.container.querySelector('#disable-redirects');
-            if (disableRedirectsBtn) disableRedirectsBtn.addEventListener('click', () => this.disableRedirects());
+            const enableRightClickBtn = this.container.querySelector('#enable-rightclick');
+            if (enableRightClickBtn) enableRightClickBtn.addEventListener('click', () => {
+                this.logGUIAction('Enable right click button clicked');
+                this.enableRightClick();
+            });
             
             // Game cheats
             const godModeBtn = this.container.querySelector('#god-mode');
-            if (godModeBtn) godModeBtn.addEventListener('click', () => this.scanForGodMode());
+            if (godModeBtn) godModeBtn.addEventListener('click', () => {
+                this.logGUIAction('God mode button clicked');
+                this.findGodMode();
+            });
             
             const speedHackBtn = this.container.querySelector('#speed-hack');
-            if (speedHackBtn) speedHackBtn.addEventListener('click', () => this.enableSpeedHack());
-            
-            const noClipBtn = this.container.querySelector('#no-clip');
-            if (noClipBtn) noClipBtn.addEventListener('click', () => this.enableNoClip());
-            
-            const autoCompleteBtn = this.container.querySelector('#auto-complete');
-            if (autoCompleteBtn) autoCompleteBtn.addEventListener('click', () => this.autoComplete());
+            if (speedHackBtn) speedHackBtn.addEventListener('click', () => {
+                this.logGUIAction('Speed hack button clicked');
+                this.enableSpeedHack();
+            });
             
             const unlockAllBtn = this.container.querySelector('#unlock-all');
-            if (unlockAllBtn) unlockAllBtn.addEventListener('click', () => this.unlockEverything());
+            if (unlockAllBtn) unlockAllBtn.addEventListener('click', () => {
+                this.logGUIAction('Unlock all button clicked');
+                this.unlockAll();
+            });
             
             const infiniteResourcesBtn = this.container.querySelector('#infinite-resources');
-            if (infiniteResourcesBtn) infiniteResourcesBtn.addEventListener('click', () => this.enableInfiniteResources());
+            if (infiniteResourcesBtn) infiniteResourcesBtn.addEventListener('click', () => {
+                this.logGUIAction('Infinite resources button clicked');
+                this.infiniteResources();
+            });
             
-            const applySpeedBtn = this.container.querySelector('#apply-speed');
-            if (applySpeedBtn) applySpeedBtn.addEventListener('click', () => this.applySpeedMultiplier());
+            const maxLevelBtn = this.container.querySelector('#max-level');
+            if (maxLevelBtn) maxLevelBtn.addEventListener('click', () => {
+                this.logGUIAction('Max level button clicked');
+                this.maxLevel();
+            });
             
-            // Continue with other extra events...
-            this.bindNetworkEvents();
-            this.bindAnalysisEvents();
-            this.bindVisualEvents();
-            this.bindPerformanceTweakEvents();
-        }
-        
-        bindNetworkEvents() {
-            const interceptBtn = this.container.querySelector('#intercept-requests');
-            if (interceptBtn) interceptBtn.addEventListener('click', () => this.interceptNetworkRequests());
+            const completeGameBtn = this.container.querySelector('#complete-game');
+            if (completeGameBtn) completeGameBtn.addEventListener('click', () => {
+                this.logGUIAction('Complete game button clicked');
+                this.completeGame();
+            });
             
-            const modifyResponsesBtn = this.container.querySelector('#modify-responses');
-            if (modifyResponsesBtn) modifyResponsesBtn.addEventListener('click', () => this.modifyNetworkResponses());
-            
-            const fakeOfflineBtn = this.container.querySelector('#fake-offline');
-            if (fakeOfflineBtn) fakeOfflineBtn.addEventListener('click', () => this.fakeOfflineMode());
-            
-            const blockAnalyticsBtn = this.container.querySelector('#block-analytics');
-            if (blockAnalyticsBtn) blockAnalyticsBtn.addEventListener('click', () => this.blockAnalytics());
-            
-            const spoofLocationBtn = this.container.querySelector('#spoof-location');
-            if (spoofLocationBtn) spoofLocationBtn.addEventListener('click', () => this.spoofLocation());
-        }
-        
-        bindAnalysisEvents() {
-            const findSecretsBtn = this.container.querySelector('#find-secrets');
-            if (findSecretsBtn) findSecretsBtn.addEventListener('click', () => this.findAPIKeys());
-            
-            const extractTokensBtn = this.container.querySelector('#extract-tokens');
-            if (extractTokensBtn) extractTokensBtn.addEventListener('click', () => this.extractTokens());
-            
-            const dumpStorageBtn = this.container.querySelector('#dump-localStorage');
-            if (dumpStorageBtn) dumpStorageBtn.addEventListener('click', () => this.dumpStorage());
-            
-            const analyzeCookiesBtn = this.container.querySelector('#analyze-cookies');
-            if (analyzeCookiesBtn) analyzeCookiesBtn.addEventListener('click', () => this.analyzeCookies());
-            
-            const findVulnBtn = this.container.querySelector('#find-vulnerabilities');
-            if (findVulnBtn) findVulnBtn.addEventListener('click', () => this.findVulnerabilities());
-        }
-        
-        bindVisualEvents() {
+            // Visual enhancements
             const darkModeBtn = this.container.querySelector('#dark-mode');
-            if (darkModeBtn) darkModeBtn.addEventListener('click', () => this.toggleDarkMode());
-            
-            const zoomBtn = this.container.querySelector('#zoom-page');
-            if (zoomBtn) zoomBtn.addEventListener('click', () => this.showZoomControls());
-            
-            const fullscreenBtn = this.container.querySelector('#fullscreen-any');
-            if (fullscreenBtn) fullscreenBtn.addEventListener('click', () => this.fullscreenAnyElement());
+            if (darkModeBtn) darkModeBtn.addEventListener('click', () => {
+                this.logGUIAction('Dark mode button clicked');
+                this.toggleDarkMode();
+            });
             
             const removeAnimationsBtn = this.container.querySelector('#remove-animations');
-            if (removeAnimationsBtn) removeAnimationsBtn.addEventListener('click', () => this.disableAnimations());
+            if (removeAnimationsBtn) removeAnimationsBtn.addEventListener('click', () => {
+                this.logGUIAction('Remove animations button clicked');
+                this.removeAnimations();
+            });
             
-            const applyCSSBtn = this.container.querySelector('#apply-css');
-            if (applyCSSBtn) applyCSSBtn.addEventListener('click', () => this.applyCustomCSS());
-        }
-        
-        bindPerformanceTweakEvents() {
-            const boostBtn = this.container.querySelector('#boost-performance');
-            if (boostBtn) boostBtn.addEventListener('click', () => this.boostPerformance());
+            const zoomInBtn = this.container.querySelector('#zoom-in');
+            if (zoomInBtn) zoomInBtn.addEventListener('click', () => {
+                this.logGUIAction('Zoom in button clicked');
+                this.zoomIn();
+            });
             
-            const reduceQualityBtn = this.container.querySelector('#reduce-quality');
-            if (reduceQualityBtn) reduceQualityBtn.addEventListener('click', () => this.reduceQuality());
+            const zoomOutBtn = this.container.querySelector('#zoom-out');
+            if (zoomOutBtn) zoomOutBtn.addEventListener('click', () => {
+                this.logGUIAction('Zoom out button clicked');
+                this.zoomOut();
+            });
+            
+            const fullscreenBtn = this.container.querySelector('#fullscreen');
+            if (fullscreenBtn) fullscreenBtn.addEventListener('click', () => {
+                this.logGUIAction('Fullscreen button clicked');
+                this.toggleFullscreen();
+            });
+            
+            const highlightClickableBtn = this.container.querySelector('#highlight-clickable');
+            if (highlightClickableBtn) highlightClickableBtn.addEventListener('click', () => {
+                this.logGUIAction('Highlight clickable button clicked');
+                this.highlightClickable();
+            });
+            
+            // Performance
+            const boostPerformanceBtn = this.container.querySelector('#boost-performance');
+            if (boostPerformanceBtn) boostPerformanceBtn.addEventListener('click', () => {
+                this.logGUIAction('Boost performance button clicked');
+                this.boostPerformance();
+            });
             
             const disableSoundsBtn = this.container.querySelector('#disable-sounds');
-            if (disableSoundsBtn) disableSoundsBtn.addEventListener('click', () => this.disableSounds());
+            if (disableSoundsBtn) disableSoundsBtn.addEventListener('click', () => {
+                this.logGUIAction('Disable sounds button clicked');
+                this.disableSounds();
+            });
             
-            const limitFPSBtn = this.container.querySelector('#limit-fps');
-            if (limitFPSBtn) limitFPSBtn.addEventListener('click', () => this.limitFPS());
+            const reduceQualityBtn = this.container.querySelector('#reduce-quality');
+            if (reduceQualityBtn) reduceQualityBtn.addEventListener('click', () => {
+                this.logGUIAction('Reduce quality button clicked');
+                this.reduceQuality();
+            });
             
             const clearCacheBtn = this.container.querySelector('#clear-cache');
-            if (clearCacheBtn) clearCacheBtn.addEventListener('click', () => this.clearBrowserCache());
-        }
-        
-        bindLogEvents() {
-            const clearLogsBtn = this.container.querySelector('#clear-logs');
-            if (clearLogsBtn) clearLogsBtn.addEventListener('click', () => this.clearLogs());
+            if (clearCacheBtn) clearCacheBtn.addEventListener('click', () => {
+                this.logGUIAction('Clear cache button clicked');
+                this.clearCache();
+            });
             
-            const exportLogsBtn = this.container.querySelector('#export-logs');
-            if (exportLogsBtn) exportLogsBtn.addEventListener('click', () => this.exportLogs());
+            const stopAllTimersBtn = this.container.querySelector('#stop-all-timers');
+            if (stopAllTimersBtn) stopAllTimersBtn.addEventListener('click', () => {
+                this.logGUIAction('Stop all timers button clicked');
+                this.stopAllTimers();
+            });
             
-            const importLogsBtn = this.container.querySelector('#import-logs');
-            if (importLogsBtn) importLogsBtn.addEventListener('click', () => this.importLogs());
-            
-            const logFilter = this.container.querySelector('#log-filter');
-            if (logFilter) logFilter.addEventListener('change', (e) => this.filterLogs(e.target.value));
+            const pauseGameBtn = this.container.querySelector('#pause-game');
+            if (pauseGameBtn) pauseGameBtn.addEventListener('click', () => {
+                this.logGUIAction('Pause game button clicked');
+                this.pauseGame();
+            });
         }
         
         // Core GUI Methods
@@ -1618,11 +1546,6 @@
             
             this.activeTab = tabName;
             this.addLog('info', 'Switched to ' + tabName + ' tab');
-            
-            // Update system info when switching to performance tab
-            if (tabName === 'performance') {
-                this.updateSystemInfo();
-            }
         }
         
         show() {
@@ -1645,12 +1568,13 @@
         stopAllActivities() {
             this.stopAutoclicker();
             this.stopKeySpammer();
-            this.stopPerformanceMonitoring();
+            this.stopMonitoring();
             this.unfreezeAllVariables();
+            this.stopRecording();
         }
         
-        // Enhanced Memory Scanner Methods
-        performMemoryScan() {
+        // Fixed Memory Scanner Methods
+        performFirstScan() {
             if (this.isScanning) return;
             
             this.isScanning = true;
@@ -1665,147 +1589,163 @@
                 return;
             }
             
-            this.addLog('info', 'Starting ' + (this.deepScanMode ? 'deep' : 'normal') + ' memory scan for: ' + searchValue);
+            this.addLog('info', 'Starting first scan for: ' + searchValue);
             this.updateScanProgress(0);
             
-            const results = [];
-            
-            // Enhanced scanning algorithm that can find Game.cookies and similar
-            this.scanGlobalScope(results, searchValue, searchType);
-            this.scanCommonGameObjects(results, searchValue, searchType);
-            
-            if (this.deepScanMode) {
-                this.scanAllObjects(results, searchValue, searchType);
-            }
-            
-            this.memoryResults = results;
-            this.displayMemoryResults();
-            this.isScanning = false;
-            this.updateScanProgress(100);
-            
-            this.addLog('scan', 'Memory scan completed. Found ' + results.length + ' results');
-        }
-        
-        scanGlobalScope(results, searchValue, searchType) {
-            // Scan window properties
-            for (const key in window) {
+            // Use setTimeout to prevent browser freeze
+            setTimeout(() => {
                 try {
-                    const value = window[key];
-                    const path = key;
-                    
-                    if (this.matchesSearchCriteria(value, searchValue, searchType, path)) {
-                        results.push({
-                            path: path,
-                            value: value,
-                            type: typeof value,
-                            address: this.generateMemoryAddress(),
-                            writable: this.isWritable(window, key),
-                            size: this.calculateSize(value)
-                        });
-                    }
-                    
-                    // Scan object properties if it's an object
-                    if (value && typeof value === 'object' && key.toLowerCase().includes('game')) {
-                        this.scanObjectProperties(value, path, results, searchValue, searchType, 0);
-                    }
-                } catch (e) {
-                    // Skip inaccessible properties
+                    const results = [];
+                    this.scanMemoryWithTimeout(results, searchValue, searchType, () => {
+                        this.memoryResults = results;
+                        this.previousScanResults = [...results]; // Store for next scan
+                        this.displayMemoryResults();
+                        this.isScanning = false;
+                        this.firstScanDone = true;
+                        this.updateScanProgress(100);
+                        
+                        // Enable next scan button
+                        const nextScanBtn = this.container.querySelector('#next-scan');
+                        if (nextScanBtn) nextScanBtn.disabled = false;
+                        
+                        this.addLog('scan', 'First scan completed. Found ' + results.length + ' results');
+                    });
+                } catch (error) {
+                    this.addLog('error', 'Scan error: ' + error.message);
+                    this.isScanning = false;
                 }
-            }
+            }, 100);
         }
         
-        scanCommonGameObjects(results, searchValue, searchType) {
-            const commonGamePaths = [
-                'Game', 'game', 'APP', 'app', 'GAME', 'Player', 'player',
-                'Game.cookies', 'Game.money', 'Game.score', 'Game.level',
-                'game.cookies', 'game.money', 'game.score', 'game.level',
-                'App.user', 'app.user', 'Player.stats', 'player.stats'
-            ];
+        performNextScan() {
+            if (this.isScanning || !this.firstScanDone) return;
             
-            commonGamePaths.forEach(path => {
+            this.isScanning = true;
+            const searchValue = this.container.querySelector('#memory-search').value.trim();
+            
+            if (!searchValue) {
+                this.addLog('warning', 'Please enter a search value');
+                this.isScanning = false;
+                return;
+            }
+            
+            this.addLog('info', 'Starting next scan for: ' + searchValue);
+            this.updateScanProgress(0);
+            
+            setTimeout(() => {
                 try {
-                    const value = this.getValueByPath(path);
-                    if (value !== undefined) {
-                        if (this.matchesSearchCriteria(value, searchValue, searchType, path)) {
+                    const results = [];
+                    
+                    // Only check previous results
+                    this.previousScanResults.forEach((result, index) => {
+                        try {
+                            const currentValue = this.getValueByPath(result.path);
+                            if (this.matchesSearchValue(currentValue, searchValue)) {
+                                results.push({
+                                    ...result,
+                                    value: currentValue,
+                                    address: this.generateMemoryAddress()
+                                });
+                            }
+                        } catch (e) {
+                            // Variable no longer exists
+                        }
+                        
+                        this.updateScanProgress(Math.round((index / this.previousScanResults.length) * 100));
+                    });
+                    
+                    this.memoryResults = results;
+                    this.previousScanResults = [...results];
+                    this.displayMemoryResults();
+                    this.isScanning = false;
+                    this.updateScanProgress(100);
+                    
+                    this.addLog('scan', 'Next scan completed. ' + results.length + ' results remain');
+                } catch (error) {
+                    this.addLog('error', 'Next scan error: ' + error.message);
+                    this.isScanning = false;
+                }
+            }, 100);
+        }
+        
+        scanMemoryWithTimeout(results, searchValue, searchType, callback) {
+            const batchSize = 100;
+            let currentIndex = 0;
+            const targets = this.getGlobalObjects();
+            
+            const processBatch = () => {
+                const endIndex = Math.min(currentIndex + batchSize, targets.length);
+                
+                for (let i = currentIndex; i < endIndex; i++) {
+                    const obj = targets[i];
+                    try {
+                        if (this.matchesSearchValue(obj.value, searchValue) && 
+                            (searchType === 'all' || typeof obj.value === searchType)) {
                             results.push({
-                                path: path,
-                                value: value,
-                                type: typeof value,
+                                path: obj.path,
+                                value: obj.value,
+                                type: typeof obj.value,
                                 address: this.generateMemoryAddress(),
-                                writable: this.isWritableByPath(path),
-                                size: this.calculateSize(value)
+                                writable: this.isWritableByPath(obj.path),
+                                size: this.calculateSize(obj.value)
                             });
                         }
                         
-                        // Scan object properties
-                        if (typeof value === 'object' && value !== null) {
-                            this.scanObjectProperties(value, path, results, searchValue, searchType, 0);
+                        // Deep scan object properties if enabled
+                        if (this.deepScanMode && obj.value && typeof obj.value === 'object') {
+                            this.scanObjectProperties(obj.value, obj.path, results, searchValue, searchType, 0);
                         }
+                    } catch (e) {
+                        // Skip problematic objects
                     }
-                } catch (e) {
-                    // Path doesn't exist
                 }
-            });
+                
+                currentIndex = endIndex;
+                this.updateScanProgress(Math.round((currentIndex / targets.length) * 100));
+                
+                if (currentIndex < targets.length && results.length < 5000) {
+                    setTimeout(processBatch, 10); // Continue processing
+                } else {
+                    callback(); // Done
+                }
+            };
+            
+            processBatch();
         }
         
-        scanObjectProperties(obj, basePath, results, searchValue, searchType, depth) {
-            if (depth > 5 || results.length > 5000) return; // Prevent infinite recursion
+        getGlobalObjects() {
+            const objects = [];
             
-            for (const key in obj) {
-                try {
-                    const value = obj[key];
-                    const path = basePath + '.' + key;
-                    
-                    if (this.matchesSearchCriteria(value, searchValue, searchType, path)) {
-                        results.push({
-                            path: path,
-                            value: value,
-                            type: typeof value,
-                            address: this.generateMemoryAddress(),
-                            writable: this.isWritable(obj, key),
-                            size: this.calculateSize(value)
-                        });
+            // Safely scan window properties
+            try {
+                const windowKeys = Object.getOwnPropertyNames(window);
+                for (const key of windowKeys) {
+                    try {
+                        const value = window[key];
+                        objects.push({ path: key, value: value });
+                    } catch (e) {
+                        // Skip inaccessible properties
                     }
-                    
-                    // Recursively scan objects
-                    if (this.deepScanMode && value && typeof value === 'object' && value !== obj) {
-                        this.scanObjectProperties(value, path, results, searchValue, searchType, depth + 1);
-                    }
-                } catch (e) {
-                    // Skip inaccessible properties
+                }
+            } catch (e) {
+                // Fallback to for...in loop
+                for (const key in window) {
+                    try {
+                        objects.push({ path: key, value: window[key] });
+                    } catch (e) {}
                 }
             }
-        }
-        
-        scanAllObjects(results, searchValue, searchType) {
-            // Scan document object
-            this.scanObjectProperties(document, 'document', results, searchValue, searchType, 0);
             
-            // Scan all global objects
-            for (const key in window) {
-                try {
-                    const value = window[key];
-                    if (value && typeof value === 'object' && value !== window) {
-                        this.scanObjectProperties(value, key, results, searchValue, searchType, 0);
-                    }
-                } catch (e) {
-                    // Skip
-                }
-            }
+            return objects;
         }
         
-        matchesSearchCriteria(value, searchValue, searchType, path) {
-            // Type filter
-            if (searchType !== 'all' && typeof value !== searchType) {
+        matchesSearchValue(value, searchValue) {
+            if (searchValue.includes('.')) {
+                // Exact path matching handled elsewhere
                 return false;
             }
             
-            // Value matching
-            if (searchValue.includes('.') && path === searchValue) {
-                return true; // Exact path match
-            }
-            
-            // Try to parse as number
+            // Numeric matching
             const numericSearch = parseFloat(searchValue);
             if (!isNaN(numericSearch) && value === numericSearch) {
                 return true;
@@ -1815,8 +1755,44 @@
             const stringValue = String(value).toLowerCase();
             const search = searchValue.toLowerCase();
             
-            return stringValue.includes(search) || path.toLowerCase().includes(search);
+            return stringValue.includes(search);
         }
+        
+        scanObjectProperties(obj, basePath, results, searchValue, searchType, depth) {
+            if (depth > 3 || results.length > 5000) return; // Prevent crashes
+            
+            try {
+                const keys = Object.getOwnPropertyNames(obj);
+                for (const key of keys) {
+                    try {
+                        const value = obj[key];
+                        const path = basePath + '.' + key;
+                        
+                        if (this.matchesSearchValue(value, searchValue) && 
+                            (searchType === 'all' || typeof value === searchType)) {
+                            results.push({
+                                path: path,
+                                value: value,
+                                type: typeof value,
+                                address: this.generateMemoryAddress(),
+                                writable: this.isWritable(obj, key),
+                                size: this.calculateSize(value)
+                            });
+                        }
+                        
+                        if (value && typeof value === 'object' && value !== obj && depth < 2) {
+                            this.scanObjectProperties(value, path, results, searchValue, searchType, depth + 1);
+                        }
+                    } catch (e) {
+                        // Skip problematic properties
+                    }
+                }
+            } catch (e) {
+                // Skip problematic objects
+            }
+        }
+        
+        // ... keep existing code (helper methods like generateMemoryAddress, calculateSize, etc.)
         
         generateMemoryAddress() {
             return '0x' + Math.random().toString(16).substr(2, 8).toUpperCase();
@@ -1860,15 +1836,17 @@
         displayMemoryResults() {
             const container = this.container.querySelector('#memory-results');
             const countElement = this.container.querySelector('#result-count');
+            const previousElement = this.container.querySelector('#previous-count');
             
             if (countElement) countElement.textContent = this.memoryResults.length;
+            if (previousElement) previousElement.textContent = this.previousScanResults.length;
             
             if (this.memoryResults.length === 0) {
                 container.innerHTML = '<div class="av-placeholder">No results found. Try a different search term.</div>';
                 return;
             }
             
-            container.innerHTML = this.memoryResults.map((result, index) => {
+            container.innerHTML = this.memoryResults.slice(0, 1000).map((result, index) => {
                 return '<div class="av-result-item" data-index="' + index + '" data-path="' + result.path + '">' +
                     '<div style="display: flex; justify-content: space-between; align-items: center;">' +
                         '<div>' +
@@ -1899,7 +1877,6 @@
         }
         
         selectMemoryItem(item) {
-            // Remove previous selection
             this.container.querySelectorAll('#memory-results .av-result-item').forEach(i => {
                 i.classList.remove('selected');
             });
@@ -1908,7 +1885,6 @@
             const index = parseInt(item.dataset.index);
             const result = this.memoryResults[index];
             
-            // Update memory details
             const detailsContainer = this.container.querySelector('#memory-info');
             detailsContainer.innerHTML = `
                 <div><strong>Path:</strong> ${result.path}</div>
@@ -1957,26 +1933,16 @@
         
         clearMemoryResults() {
             this.memoryResults = [];
+            this.previousScanResults = [];
+            this.firstScanDone = false;
             this.displayMemoryResults();
             this.container.querySelector('#memory-info').innerHTML = 'Select a result to view details';
+            
+            // Disable next scan button
+            const nextScanBtn = this.container.querySelector('#next-scan');
+            if (nextScanBtn) nextScanBtn.disabled = true;
+            
             this.addLog('info', 'Memory scan results cleared');
-        }
-        
-        exportMemoryResults() {
-            if (this.memoryResults.length === 0) {
-                this.addLog('warning', 'No results to export');
-                return;
-            }
-            
-            const data = {
-                timestamp: new Date().toISOString(),
-                searchQuery: this.container.querySelector('#memory-search').value,
-                deepScan: this.deepScanMode,
-                results: this.memoryResults
-            };
-            
-            this.downloadJSON(data, 'memory-scan-' + Date.now() + '.json');
-            this.addLog('info', 'Memory results exported');
         }
         
         // Enhanced Console Methods
@@ -1996,10 +1962,8 @@
             
             const output = this.container.querySelector('#console-output');
             
-            // Add command to history
             this.consoleHistory.push(command);
             
-            // Display command
             output.innerHTML += '<div class="av-console-line" style="color: #0088ff;">&gt; ' + command + '</div>';
             
             try {
@@ -2041,7 +2005,6 @@
                     return;
                 }
                 
-                // Create interval to constantly set the value
                 const intervalId = setInterval(() => {
                     try {
                         this.setValueByPath(varPath, currentValue);
@@ -2049,11 +2012,13 @@
                         clearInterval(intervalId);
                         this.frozenVars.delete(varPath);
                         this.updateFrozenCount();
+                        this.updateFrozenList();
                     }
                 }, 100);
                 
                 this.frozenVars.set(varPath, { intervalId, value: currentValue });
                 this.updateFrozenCount();
+                this.updateFrozenList();
                 
                 this.addLog('cheat', 'Frozen ' + varPath + ' at value: ' + currentValue);
             } catch (error) {
@@ -2068,6 +2033,52 @@
             obj[prop] = value;
         }
         
+        updateFrozenCount() {
+            const countElement = this.container.querySelector('#frozen-count');
+            if (countElement) {
+                countElement.textContent = this.frozenVars.size;
+            }
+        }
+        
+        updateFrozenList() {
+            const container = this.container.querySelector('#frozen-items');
+            if (!container) return;
+            
+            if (this.frozenVars.size === 0) {
+                container.innerHTML = 'No frozen variables';
+                return;
+            }
+            
+            container.innerHTML = Array.from(this.frozenVars.entries()).map(([path, data]) => {
+                return '<div class="av-result-item frozen-var-item" data-path="' + path + '">' +
+                    '<strong>' + path + '</strong> = ' + this.formatValue(data.value) +
+                '</div>';
+            }).join('');
+            
+            // Bind click events for selection
+            container.querySelectorAll('.frozen-var-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    container.querySelectorAll('.frozen-var-item').forEach(i => i.classList.remove('selected'));
+                    item.classList.add('selected');
+                });
+            });
+        }
+        
+        removeSelectedFrozenVar() {
+            const selectedItem = this.container.querySelector('#frozen-items .frozen-var-item.selected');
+            if (selectedItem) {
+                const path = selectedItem.dataset.path;
+                const data = this.frozenVars.get(path);
+                if (data) {
+                    clearInterval(data.intervalId);
+                    this.frozenVars.delete(path);
+                    this.updateFrozenCount();
+                    this.updateFrozenList();
+                    this.addLog('info', 'Unfroze variable: ' + path);
+                }
+            }
+        }
+        
         setInfinite() {
             const varPath = this.container.querySelector('#variable-input').value.trim();
             if (!varPath) {
@@ -2076,7 +2087,7 @@
             }
             
             try {
-                this.setValueByPath(varPath, 1e308); // JavaScript max safe number
+                this.setValueByPath(varPath, 1e308);
                 this.addLog('cheat', 'Set ' + varPath + ' to infinite');
             } catch (error) {
                 this.addLog('error', 'Failed to set infinite: ' + error.message);
@@ -2155,27 +2166,13 @@
             }
         }
         
-        watchValue() {
-            const varPath = this.container.querySelector('#variable-input').value.trim();
-            if (!varPath) return;
-            
-            this.watchVariable(varPath);
-            this.addLog('info', 'Now watching ' + varPath + ' for changes');
-        }
-        
-        updateFrozenCount() {
-            const countElement = this.container.querySelector('#frozen-count');
-            if (countElement) {
-                countElement.textContent = this.frozenVars.size;
-            }
-        }
-        
         unfreezeAllVariables() {
             this.frozenVars.forEach((data, varName) => {
                 clearInterval(data.intervalId);
             });
             this.frozenVars.clear();
             this.updateFrozenCount();
+            this.updateFrozenList();
             this.addLog('info', 'All variables unfrozen');
         }
         
@@ -2186,7 +2183,7 @@
             }
         }
         
-        // Enhanced Autoclicker Methods
+        // Autoclicker Methods (keep existing functionality)
         toggleAutoclicker() {
             if (this.autoclickerActive) {
                 this.stopAutoclicker();
@@ -2233,7 +2230,6 @@
                             clickY = parseInt(this.container.querySelector('#click-y').value);
                         }
                         
-                        // Simulate click at coordinates
                         this.simulateClick(clickX, clickY);
                         
                         this.clickCount++;
@@ -2328,13 +2324,7 @@
             this.addLog('info', 'Mouse position captured: ' + this.mousePosition.x + ', ' + this.mousePosition.y);
         }
         
-        setClickCoordinates() {
-            const x = parseInt(this.container.querySelector('#click-x').value);
-            const y = parseInt(this.container.querySelector('#click-y').value);
-            this.addLog('info', 'Click coordinates set to: ' + x + ', ' + y);
-        }
-        
-        // Enhanced Key Spammer Methods
+        // Key Spammer Methods
         startKeySpammer() {
             if (this.keySpammerActive) return;
             
@@ -2395,118 +2385,949 @@
             document.dispatchEvent(event);
         }
         
-        // Enhanced DOM Methods (continuing with similar improvements for all other methods...)
-        
-        // Performance monitoring
-        updateSystemInfo() {
-            const container = this.container.querySelector('#system-info');
-            if (!container) return;
+        // Explorer Methods
+        toggleExplorerNode(node) {
+            const path = node.dataset.path;
+            const toggle = node.querySelector('.av-tree-toggle');
+            const isExpanded = this.explorerState.get(path) || false;
             
-            const info = {
-                'User Agent': navigator.userAgent,
-                'Platform': navigator.platform,
-                'Language': navigator.language,
-                'Cookies Enabled': navigator.cookieEnabled,
-                'Online Status': navigator.onLine ? 'Online' : 'Offline',
-                'Screen Resolution': screen.width + 'x' + screen.height,
-                'Color Depth': screen.colorDepth + ' bits',
-                'Timezone': Intl.DateTimeFormat().resolvedOptions().timeZone,
-                'Memory': navigator.deviceMemory ? navigator.deviceMemory + ' GB' : 'Unknown',
-                'CPU Cores': navigator.hardwareConcurrency || 'Unknown',
-                'Connection': navigator.connection ? navigator.connection.effectiveType : 'Unknown',
-                'Local Storage': this.getStorageSize('localStorage'),
-                'Session Storage': this.getStorageSize('sessionStorage'),
-                'Page URL': window.location.href,
-                'Referrer': document.referrer || 'Direct',
-                'Load Time': performance.timing.loadEventEnd - performance.timing.navigationStart + 'ms'
-            };
+            if (isExpanded) {
+                // Collapse
+                toggle.textContent = '▶';
+                this.explorerState.set(path, false);
+                this.removeChildNodes(node);
+            } else {
+                // Expand
+                toggle.textContent = '▼';
+                this.explorerState.set(path, true);
+                this.addChildNodes(node, path);
+            }
             
-            container.innerHTML = Object.entries(info).map(([key, value]) => 
-                '<div><strong>' + key + ':</strong> ' + value + '</div>'
-            ).join('');
+            // Update variable and function lists
+            this.updateExplorerPanels(path);
         }
         
-        getStorageSize(type) {
+        addChildNodes(parentNode, path) {
             try {
-                const storage = window[type];
-                let size = 0;
-                for (let key in storage) {
-                    if (storage.hasOwnProperty(key)) {
-                        size += storage[key].length + key.length;
+                const obj = this.getValueByPath(path);
+                if (!obj || typeof obj !== 'object') return;
+                
+                const keys = Object.getOwnPropertyNames(obj).slice(0, 50); // Limit to prevent crashes
+                
+                keys.forEach(key => {
+                    try {
+                        const value = obj[key];
+                        const childPath = path + '.' + key;
+                        
+                        const childNode = document.createElement('div');
+                        childNode.className = 'av-tree-node';
+                        childNode.dataset.path = childPath;
+                        childNode.style.marginLeft = '20px';
+                        
+                        const hasChildren = value && typeof value === 'object';
+                        const icon = typeof value === 'function' ? '⚙️' : 
+                                   Array.isArray(value) ? '📋' : 
+                                   typeof value === 'object' ? '📁' : '📄';
+                        
+                        childNode.innerHTML = `
+                            <span class="av-tree-toggle">${hasChildren ? '▶' : ' '}</span>
+                            <span class="av-tree-icon">${icon}</span>
+                            <span class="av-tree-label">${key}</span>
+                        `;
+                        
+                        parentNode.parentNode.insertBefore(childNode, parentNode.nextSibling);
+                        
+                        if (hasChildren) {
+                            childNode.addEventListener('click', (e) => {
+                                e.stopPropagation();
+                                this.toggleExplorerNode(childNode);
+                            });
+                        }
+                    } catch (e) {
+                        // Skip problematic properties
+                    }
+                });
+            } catch (e) {
+                this.addLog('error', 'Failed to expand node: ' + e.message);
+            }
+        }
+        
+        removeChildNodes(node) {
+            let nextNode = node.nextSibling;
+            while (nextNode && nextNode.style.marginLeft === '20px') {
+                const nodeToRemove = nextNode;
+                nextNode = nextNode.nextSibling;
+                nodeToRemove.remove();
+            }
+        }
+        
+        updateExplorerPanels(path) {
+            try {
+                const obj = this.getValueByPath(path);
+                if (!obj || typeof obj !== 'object') return;
+                
+                // Update variables panel
+                const variableList = this.container.querySelector('#variable-list');
+                const functionList = this.container.querySelector('#function-list');
+                
+                const variables = [];
+                const functions = [];
+                
+                Object.getOwnPropertyNames(obj).slice(0, 100).forEach(key => {
+                    try {
+                        const value = obj[key];
+                        if (typeof value === 'function') {
+                            functions.push({ key, value });
+                        } else {
+                            variables.push({ key, value });
+                        }
+                    } catch (e) {}
+                });
+                
+                variableList.innerHTML = variables.length > 0 ? 
+                    variables.map(v => `
+                        <div class="av-result-item" data-var="${path}.${v.key}">
+                            <strong>${v.key}</strong>: ${this.formatValue(v.value)}
+                        </div>
+                    `).join('') : 
+                    '<div class="av-placeholder">No variables found</div>';
+                
+                functionList.innerHTML = functions.length > 0 ?
+                    functions.map(f => `
+                        <div class="av-result-item" data-func="${path}.${f.key}">
+                            <strong>${f.key}()</strong>
+                            <div style="color: #888; font-size: 10px;">Function</div>
+                        </div>
+                    `).join('') :
+                    '<div class="av-placeholder">No functions found</div>';
+                
+                // Bind click events
+                variableList.querySelectorAll('.av-result-item').forEach(item => {
+                    item.addEventListener('click', () => {
+                        const varPath = item.dataset.var;
+                        this.copyToConsole(varPath);
+                    });
+                });
+                
+            } catch (e) {
+                this.addLog('error', 'Failed to update explorer panels: ' + e.message);
+            }
+        }
+        
+        loadAllVariables() {
+            this.addLog('info', 'Loading all variables from current scope...');
+            // Implementation would scan all variables in the current object
+        }
+        
+        loadAllFunctions() {
+            this.addLog('info', 'Loading all functions from current scope...');
+            // Implementation would scan all functions in the current object
+        }
+        
+        // Fixed Anti-cheat Scanner
+        startAntiCheatScan() {
+            if (this.isAntiCheatScanning) return;
+            
+            this.isAntiCheatScanning = true;
+            const progressContainer = this.container.querySelector('#anticheat-progress');
+            const progressBar = this.container.querySelector('#ac-scan-progress');
+            const statusElement = this.container.querySelector('#scan-status');
+            const resultsContainer = this.container.querySelector('#anticheat-results');
+            
+            if (progressContainer) progressContainer.style.display = 'block';
+            if (resultsContainer) resultsContainer.innerHTML = '';
+            
+            const checks = [
+                { name: 'Console Detection', method: this.checkConsoleDetection.bind(this) },
+                { name: 'DevTools Detection', method: this.checkDevToolsDetection.bind(this) },
+                { name: 'Function Hooks', method: this.checkFunctionHooks.bind(this) },
+                { name: 'Variable Protection', method: this.checkVariableProtection.bind(this) },
+                { name: 'Network Monitoring', method: this.checkNetworkMonitoring.bind(this) }
+            ];
+            
+            const results = [];
+            let riskScore = 0;
+            let currentIndex = 0;
+            
+            const runNextCheck = () => {
+                if (currentIndex >= checks.length) {
+                    this.detectionScore = Math.min(riskScore, 100);
+                    this.displayAntiCheatResults(results);
+                    
+                    if (progressContainer) progressContainer.style.display = 'none';
+                    this.isAntiCheatScanning = false;
+                    
+                    this.addLog('scan', 'Anti-cheat scan completed. Risk score: ' + this.detectionScore + '/100');
+                    return;
+                }
+                
+                const check = checks[currentIndex];
+                if (statusElement) statusElement.textContent = 'Running: ' + check.name;
+                
+                try {
+                    const result = check.method();
+                    results.push({ name: check.name, ...result });
+                    riskScore += result.risk || 0;
+                } catch (error) {
+                    results.push({ name: check.name, detected: false, risk: 0, error: error.message });
+                }
+                
+                const progress = Math.round(((currentIndex + 1) / checks.length) * 100);
+                if (progressBar) progressBar.style.width = progress + '%';
+                
+                currentIndex++;
+                setTimeout(runNextCheck, 300);
+            };
+            
+            runNextCheck();
+        }
+        
+        checkConsoleDetection() {
+            let detected = false;
+            let risk = 0;
+            
+            // Check if console methods are overridden
+            try {
+                if (console.log && console.log.toString().indexOf('native code') === -1) {
+                    detected = true;
+                    risk = 20;
+                }
+            } catch (e) {
+                detected = true;
+                risk = 30;
+            }
+            
+            return {
+                detected: detected,
+                risk: risk,
+                description: detected ? 'Console logging may be monitored' : 'Console appears normal'
+            };
+        }
+        
+        checkDevToolsDetection() {
+            let detected = false;
+            let risk = 0;
+            
+            // Simple devtools detection
+            const start = performance.now();
+            console.clear();
+            const end = performance.now();
+            
+            if (end - start > 50) {
+                detected = true;
+                risk = 25;
+            }
+            
+            return {
+                detected: detected,
+                risk: risk,
+                description: detected ? 'DevTools detection found' : 'No DevTools detection'
+            };
+        }
+        
+        checkFunctionHooks() {
+            let detected = false;
+            let risk = 0;
+            
+            const functions = ['setTimeout', 'setInterval', 'fetch', 'XMLHttpRequest'];
+            let hookedCount = 0;
+            
+            functions.forEach(funcName => {
+                try {
+                    const func = window[funcName];
+                    if (func && func.toString().indexOf('native code') === -1) {
+                        hookedCount++;
+                    }
+                } catch (e) {
+                    hookedCount++;
+                }
+            });
+            
+            if (hookedCount > 0) {
+                detected = true;
+                risk = hookedCount * 10;
+            }
+            
+            return {
+                detected: detected,
+                risk: risk,
+                description: `${hookedCount} functions appear to be hooked`
+            };
+        }
+        
+        checkVariableProtection() {
+            let detected = false;
+            let risk = 0;
+            
+            // Check common game variables
+            const testVars = ['game', 'Game', 'score', 'money', 'coins'];
+            let protectedCount = 0;
+            
+            testVars.forEach(varName => {
+                try {
+                    if (window[varName] !== undefined) {
+                        const descriptor = Object.getOwnPropertyDescriptor(window, varName);
+                        if (descriptor && (!descriptor.writable || descriptor.set)) {
+                            protectedCount++;
+                        }
+                    }
+                } catch (e) {
+                    protectedCount++;
+                }
+            });
+            
+            if (protectedCount > 0) {
+                detected = true;
+                risk = protectedCount * 8;
+            }
+            
+            return {
+                detected: detected,
+                risk: risk,
+                description: `${protectedCount} variables appear to be protected`
+            };
+        }
+        
+        checkNetworkMonitoring() {
+            let detected = false;
+            let risk = 0;
+            
+            try {
+                const xhr = new XMLHttpRequest();
+                if (xhr.open.toString().indexOf('native code') === -1) {
+                    detected = true;
+                    risk = 15;
+                }
+            } catch (e) {
+                detected = true;
+                risk = 20;
+            }
+            
+            return {
+                detected: detected,
+                risk: risk,
+                description: detected ? 'Network requests may be monitored' : 'No network monitoring detected'
+            };
+        }
+        
+        displayAntiCheatResults(results) {
+            const container = this.container.querySelector('#anticheat-results');
+            const scoreElement = this.container.querySelector('#detection-score');
+            
+            if (scoreElement) {
+                scoreElement.textContent = this.detectionScore;
+                scoreElement.className = this.detectionScore < 30 ? 'score-low' : 
+                                       this.detectionScore < 70 ? 'score-medium' : 'score-high';
+            }
+            
+            if (container) {
+                container.innerHTML = results.map(result => {
+                    return '<div class="av-result-item" style="border-left: 3px solid ' + (result.detected ? '#ff0000' : '#00ff00') + ';">' +
+                        '<div style="display: flex; justify-content: space-between;">' +
+                            '<strong>' + result.name + '</strong>' +
+                            '<span style="color: ' + (result.detected ? '#ff0000' : '#00ff00') + ';">' +
+                                (result.detected ? '⚠️ DETECTED' : '✅ CLEAR') +
+                            '</span>' +
+                        '</div>' +
+                        '<div style="color: #ccc; font-size: 11px; margin-top: 4px;">' +
+                            (result.description || 'No description') +
+                        '</div>' +
+                        '<div style="color: #ffaa00; font-size: 10px; text-align: right;">' +
+                            'Risk: ' + (result.risk || 0) + '/30' +
+                        '</div>' +
+                    '</div>';
+                }).join('');
+            }
+        }
+        
+        // Fixed Macro Recorder
+        startRecording() {
+            if (this.isRecording) return;
+            
+            this.isRecording = true;
+            this.recordedMacro = [];
+            
+            const statusElement = this.container.querySelector('#recording-status');
+            if (statusElement) statusElement.textContent = 'Recording...';
+            
+            this.recordMouseEvents();
+            this.recordKeyboardEvents();
+            
+            this.addLog('info', 'Macro recording started');
+        }
+        
+        stopRecording() {
+            if (!this.isRecording) return;
+            
+            this.isRecording = false;
+            const statusElement = this.container.querySelector('#recording-status');
+            if (statusElement) statusElement.textContent = 'Stopped';
+            
+            this.removeRecordingListeners();
+            this.updateMacroDisplay();
+            
+            this.addLog('info', 'Macro recording stopped. Recorded ' + this.recordedMacro.length + ' actions');
+        }
+        
+        recordMouseEvents() {
+            this.mouseRecordHandler = (e) => {
+                if (this.isRecording && !e.target.closest('#toxivids-cheat-engine')) {
+                    this.recordedMacro.push({
+                        type: 'click',
+                        x: e.clientX,
+                        y: e.clientY,
+                        target: this.generateSelector(e.target),
+                        timestamp: Date.now()
+                    });
+                    this.updateMacroCount();
+                }
+            };
+            
+            document.addEventListener('click', this.mouseRecordHandler, true);
+        }
+        
+        recordKeyboardEvents() {
+            this.keyRecordHandler = (e) => {
+                if (this.isRecording && !e.target.closest('#toxivids-cheat-engine')) {
+                    this.recordedMacro.push({
+                        type: 'keypress',
+                        key: e.key,
+                        code: e.code,
+                        timestamp: Date.now()
+                    });
+                    this.updateMacroCount();
+                }
+            };
+            
+            document.addEventListener('keydown', this.keyRecordHandler, true);
+        }
+        
+        removeRecordingListeners() {
+            if (this.mouseRecordHandler) {
+                document.removeEventListener('click', this.mouseRecordHandler, true);
+            }
+            if (this.keyRecordHandler) {
+                document.removeEventListener('keydown', this.keyRecordHandler, true);
+            }
+        }
+        
+        updateMacroCount() {
+            const countElement = this.container.querySelector('#macro-count');
+            if (countElement) {
+                countElement.textContent = this.recordedMacro.length;
+            }
+        }
+        
+        updateMacroDisplay() {
+            const container = this.container.querySelector('#macro-list');
+            if (this.recordedMacro.length === 0) {
+                container.innerHTML = '<div class="av-placeholder">No recorded actions</div>';
+                return;
+            }
+            
+            container.innerHTML = this.recordedMacro.slice(0, 50).map((action, index) => {
+                return '<div class="av-result-item" style="font-size: 11px;">' +
+                    (index + 1) + '. ' + action.type + ' ' + (action.target || action.key || '') + ' ' +
+                    (action.x ? '(' + action.x + ', ' + action.y + ')' : '') +
+                '</div>';
+            }).join('');
+        }
+        
+        playMacro() {
+            if (this.recordedMacro.length === 0) {
+                this.addLog('warning', 'No macro recorded');
+                return;
+            }
+            
+            this.addLog('info', 'Playing macro with ' + this.recordedMacro.length + ' actions');
+            
+            let actionIndex = 0;
+            const playNextAction = () => {
+                if (actionIndex >= this.recordedMacro.length) {
+                    this.addLog('info', 'Macro playback completed');
+                    return;
+                }
+                
+                const action = this.recordedMacro[actionIndex];
+                try {
+                    if (action.type === 'click') {
+                        const element = document.querySelector(action.target);
+                        if (element) {
+                            element.click();
+                        } else {
+                            this.simulateClick(action.x, action.y);
+                        }
+                    } else if (action.type === 'keypress') {
+                        this.sendKeyEvent(action.key);
+                    }
+                } catch (error) {
+                    this.addLog('error', 'Macro playback error: ' + error.message);
+                }
+                
+                actionIndex++;
+                setTimeout(playNextAction, 100);
+            };
+            
+            playNextAction();
+        }
+        
+        clearMacro() {
+            this.recordedMacro = [];
+            this.updateMacroCount();
+            this.updateMacroDisplay();
+            this.addLog('info', 'Macro cleared');
+        }
+        
+        // Network Monitoring Methods
+        startLightMonitor() {
+            this.stopMonitoring();
+            this.monitoringLevel = 'light';
+            this.startVariableMonitoring();
+            this.container.querySelector('#monitor-status').textContent = 'Light Monitoring';
+            this.addLog('info', 'Light monitoring started - watching variable changes');
+        }
+        
+        startMediumMonitor() {
+            this.stopMonitoring();
+            this.monitoringLevel = 'medium';
+            this.startVariableMonitoring();
+            this.startFunctionMonitoring();
+            this.startClickMonitoring();
+            this.container.querySelector('#monitor-status').textContent = 'Medium Monitoring';
+            this.addLog('info', 'Medium monitoring started - watching variables, functions, and clicks');
+        }
+        
+        startDeepMonitor() {
+            this.stopMonitoring();
+            this.monitoringLevel = 'deep';
+            this.startVariableMonitoring();
+            this.startFunctionMonitoring();
+            this.startClickMonitoring();
+            this.startNetworkMonitoring();
+            this.startDOMMonitoring();
+            this.container.querySelector('#monitor-status').textContent = 'Deep Monitoring';
+            this.addLog('info', 'Deep monitoring started - logging everything');
+        }
+        
+        stopMonitoring() {
+            this.monitoringLevel = 'none';
+            if (this.monitoringInterval) {
+                clearInterval(this.monitoringInterval);
+                this.monitoringInterval = null;
+            }
+            this.container.querySelector('#monitor-status').textContent = 'Stopped';
+            this.addLog('info', 'Monitoring stopped');
+        }
+        
+        startVariableMonitoring() {
+            // Monitor common game variables
+            const varsToWatch = ['Game', 'game', 'score', 'money', 'coins', 'health', 'level'];
+            varsToWatch.forEach(varName => {
+                if (window[varName] !== undefined) {
+                    this.watchVariableForMonitoring(varName);
+                }
+            });
+        }
+        
+        watchVariableForMonitoring(varName) {
+            try {
+                const originalValue = window[varName];
+                let currentValue = originalValue;
+                
+                Object.defineProperty(window, varName, {
+                    get: () => currentValue,
+                    set: (newValue) => {
+                        this.logMonitorEvent('Variable Changed', `${varName}: ${currentValue} → ${newValue}`);
+                        this.updateMonitorStats('var-changes');
+                        currentValue = newValue;
+                    }
+                });
+            } catch (e) {
+                // Variable not writable
+            }
+        }
+        
+        startFunctionMonitoring() {
+            // Monitor common functions
+            const funcsToWatch = ['setTimeout', 'setInterval', 'fetch', 'eval'];
+            funcsToWatch.forEach(funcName => {
+                this.hookFunctionForMonitoring(funcName);
+            });
+        }
+        
+        hookFunctionForMonitoring(funcName) {
+            try {
+                const original = window[funcName];
+                if (original && typeof original === 'function') {
+                    window[funcName] = function(...args) {
+                        this.logMonitorEvent('Function Called', `${funcName}(${args.length} args)`);
+                        this.updateMonitorStats('func-calls');
+                        return original.apply(this, args);
+                    }.bind(this);
+                }
+            } catch (e) {
+                // Function not hookable
+            }
+        }
+        
+        startClickMonitoring() {
+            document.addEventListener('click', (e) => {
+                if (this.monitoringLevel !== 'none') {
+                    this.logMonitorEvent('Element Clicked', `${e.target.tagName}${e.target.id ? '#' + e.target.id : ''}`);
+                    this.updateMonitorStats('elem-clicks');
+                }
+            });
+        }
+        
+        startNetworkMonitoring() {
+            // Hook fetch and XMLHttpRequest
+            const originalFetch = window.fetch;
+            window.fetch = function(...args) {
+                this.logMonitorEvent('Network Request', `fetch(${args[0]})`);
+                this.updateMonitorStats('net-requests');
+                return originalFetch.apply(this, args);
+            }.bind(this);
+        }
+        
+        startDOMMonitoring() {
+            // Monitor DOM changes
+            const observer = new MutationObserver((mutations) => {
+                if (this.monitoringLevel === 'deep') {
+                    mutations.forEach(mutation => {
+                        this.logMonitorEvent('DOM Changed', `${mutation.type}: ${mutation.target.tagName}`);
+                    });
+                }
+            });
+            
+            observer.observe(document.body, {
+                childList: true,
+                subtree: true,
+                attributes: true
+            });
+        }
+        
+        logMonitorEvent(type, message) {
+            const output = this.container.querySelector('#monitor-output');
+            if (output) {
+                const timestamp = new Date().toLocaleTimeString();
+                output.innerHTML += `<div>[${timestamp}] ${type}: ${message}</div>`;
+                output.scrollTop = output.scrollHeight;
+                
+                // Keep only last 100 lines
+                const lines = output.children;
+                if (lines.length > 100) {
+                    output.removeChild(lines[0]);
+                }
+            }
+        }
+        
+        updateMonitorStats(statType) {
+            const element = this.container.querySelector('#' + statType);
+            if (element) {
+                const current = parseInt(element.textContent) || 0;
+                element.textContent = current + 1;
+            }
+        }
+        
+        // Extra Tab Functional Methods
+        disableAds() {
+            const adSelectors = [
+                '[id*="ad"]', '[class*="ad"]', '[id*="banner"]', '[class*="banner"]',
+                'iframe[src*="ads"]', 'iframe[src*="doubleclick"]', '.advertisement'
+            ];
+            
+            let removedCount = 0;
+            adSelectors.forEach(selector => {
+                document.querySelectorAll(selector).forEach(element => {
+                    element.style.display = 'none';
+                    removedCount++;
+                });
+            });
+            
+            this.addLog('cheat', `Disabled ${removedCount} potential ad elements`);
+        }
+        
+        enableCopyPaste() {
+            // Remove copy/paste restrictions
+            document.addEventListener('contextmenu', e => e.stopPropagation(), true);
+            document.addEventListener('selectstart', e => e.stopPropagation(), true);
+            document.addEventListener('copy', e => e.stopPropagation(), true);
+            document.addEventListener('paste', e => e.stopPropagation(), true);
+            
+            // Enable text selection
+            document.body.style.userSelect = 'text';
+            document.body.style.webkitUserSelect = 'text';
+            
+            this.addLog('cheat', 'Copy/paste enabled');
+        }
+        
+        removeOverlays() {
+            // Remove fixed/absolute positioned overlays
+            document.querySelectorAll('*').forEach(element => {
+                const style = getComputedStyle(element);
+                if ((style.position === 'fixed' || style.position === 'absolute') && 
+                    (style.zIndex > 1000 || style.background.includes('rgba'))) {
+                    element.style.display = 'none';
+                }
+            });
+            
+            this.addLog('cheat', 'Removed overlay elements');
+        }
+        
+        showPasswords() {
+            let count = 0;
+            document.querySelectorAll('input[type="password"]').forEach(input => {
+                input.type = 'text';
+                count++;
+            });
+            this.addLog('cheat', `Revealed ${count} password fields`);
+        }
+        
+        enableRightClick() {
+            document.addEventListener('contextmenu', e => e.stopPropagation(), true);
+            this.addLog('cheat', 'Right click enabled');
+        }
+        
+        findGodMode() {
+            const possibleGodModeVars = [
+                'invincible', 'godMode', 'immortal', 'invulnerable', 
+                'health', 'hp', 'lives', 'damage'
+            ];
+            
+            let found = [];
+            possibleGodModeVars.forEach(varName => {
+                this.searchForVariable(varName, found);
+            });
+            
+            this.addLog('scan', `Found ${found.length} potential god mode variables: ${found.join(', ')}`);
+        }
+        
+        searchForVariable(varName, results) {
+            for (const key in window) {
+                if (key.toLowerCase().includes(varName.toLowerCase())) {
+                    results.push(key);
+                }
+            }
+        }
+        
+        enableSpeedHack() {
+            const multiplier = parseFloat(this.container.querySelector('#speed-multiplier').value);
+            
+            // Hook animation functions
+            const originalRAF = window.requestAnimationFrame;
+            window.requestAnimationFrame = function(callback) {
+                return originalRAF(function(time) {
+                    callback(time * multiplier);
+                });
+            };
+            
+            this.addLog('cheat', `Speed hack enabled with ${multiplier}x multiplier`);
+        }
+        
+        unlockAll() {
+            // Look for common unlock variables
+            const unlockVars = ['unlocked', 'locked', 'available', 'enabled'];
+            unlockVars.forEach(varName => {
+                for (const key in window) {
+                    if (key.toLowerCase().includes(varName)) {
+                        try {
+                            if (typeof window[key] === 'boolean') {
+                                window[key] = varName === 'locked' ? false : true;
+                            }
+                        } catch (e) {}
                     }
                 }
-                return (size / 1024).toFixed(2) + ' KB';
-            } catch {
-                return 'Unavailable';
+            });
+            
+            this.addLog('cheat', 'Attempted to unlock all features');
+        }
+        
+        infiniteResources() {
+            const resourceVars = ['money', 'coins', 'gold', 'gems', 'points', 'score'];
+            let modified = 0;
+            
+            resourceVars.forEach(varName => {
+                for (const key in window) {
+                    if (key.toLowerCase().includes(varName)) {
+                        try {
+                            if (typeof window[key] === 'number') {
+                                window[key] = 999999999;
+                                modified++;
+                            }
+                        } catch (e) {}
+                    }
+                }
+            });
+            
+            this.addLog('cheat', `Set ${modified} resource variables to infinite`);
+        }
+        
+        maxLevel() {
+            const levelVars = ['level', 'lvl', 'rank', 'tier'];
+            let modified = 0;
+            
+            levelVars.forEach(varName => {
+                for (const key in window) {
+                    if (key.toLowerCase().includes(varName)) {
+                        try {
+                            if (typeof window[key] === 'number') {
+                                window[key] = 9999;
+                                modified++;
+                            }
+                        } catch (e) {}
+                    }
+                }
+            });
+            
+            this.addLog('cheat', `Set ${modified} level variables to maximum`);
+        }
+        
+        completeGame() {
+            // Look for completion variables
+            const completionVars = ['complete', 'finished', 'done', 'progress'];
+            let modified = 0;
+            
+            completionVars.forEach(varName => {
+                for (const key in window) {
+                    if (key.toLowerCase().includes(varName)) {
+                        try {
+                            if (typeof window[key] === 'boolean') {
+                                window[key] = true;
+                                modified++;
+                            } else if (typeof window[key] === 'number') {
+                                window[key] = 100;
+                                modified++;
+                            }
+                        } catch (e) {}
+                    }
+                }
+            });
+            
+            this.addLog('cheat', `Modified ${modified} completion variables`);
+        }
+        
+        toggleDarkMode() {
+            document.body.style.filter = document.body.style.filter ? '' : 'invert(1) hue-rotate(180deg)';
+            this.addLog('cheat', 'Dark mode toggled');
+        }
+        
+        removeAnimations() {
+            const style = document.createElement('style');
+            style.textContent = '*, *::before, *::after { animation: none !important; transition: none !important; }';
+            document.head.appendChild(style);
+            this.addLog('cheat', 'Animations disabled');
+        }
+        
+        zoomIn() {
+            document.body.style.zoom = (parseFloat(document.body.style.zoom) || 1) + 0.1;
+            this.addLog('cheat', 'Zoomed in');
+        }
+        
+        zoomOut() {
+            document.body.style.zoom = Math.max(0.1, (parseFloat(document.body.style.zoom) || 1) - 0.1);
+            this.addLog('cheat', 'Zoomed out');
+        }
+        
+        toggleFullscreen() {
+            if (document.fullscreenElement) {
+                document.exitFullscreen();
+            } else {
+                document.documentElement.requestFullscreen();
             }
+            this.addLog('cheat', 'Fullscreen toggled');
         }
         
-        startPerformanceMonitoring() {
-            this.performanceInterval = setInterval(() => {
-                this.updatePerformanceStats();
-            }, 1000);
-            this.addLog('info', 'Performance monitoring started');
+        highlightClickable() {
+            const clickableElements = document.querySelectorAll('button, a, input, [onclick], [role="button"]');
+            clickableElements.forEach(element => {
+                element.style.border = '2px solid red';
+                element.style.backgroundColor = 'rgba(255, 0, 0, 0.1)';
+            });
+            this.addLog('cheat', `Highlighted ${clickableElements.length} clickable elements`);
         }
         
-        stopPerformanceMonitoring() {
-            if (this.performanceInterval) {
-                clearInterval(this.performanceInterval);
-                this.performanceInterval = null;
+        boostPerformance() {
+            // Reduce visual effects
+            document.body.style.transform = 'translateZ(0)';
+            document.body.style.backfaceVisibility = 'hidden';
+            
+            // Disable smooth scrolling
+            document.documentElement.style.scrollBehavior = 'auto';
+            
+            this.addLog('cheat', 'Performance boost applied');
+        }
+        
+        disableSounds() {
+            // Mute all audio elements
+            document.querySelectorAll('audio, video').forEach(element => {
+                element.muted = true;
+                element.volume = 0;
+            });
+            
+            // Override audio context
+            if (window.AudioContext) {
+                window.AudioContext = function() { return null; };
             }
-            this.addLog('info', 'Performance monitoring stopped');
+            
+            this.addLog('cheat', 'All sounds disabled');
         }
         
-        updatePerformanceStats() {
-            // FPS calculation
-            let fps = 60;
-            if (this.lastFrameTime) {
-                fps = Math.round(1000 / (Date.now() - this.lastFrameTime));
+        reduceQuality() {
+            // Reduce image quality
+            document.querySelectorAll('img').forEach(img => {
+                img.style.imageRendering = 'pixelated';
+            });
+            
+            // Reduce canvas quality
+            document.querySelectorAll('canvas').forEach(canvas => {
+                const ctx = canvas.getContext('2d');
+                if (ctx) {
+                    ctx.imageSmoothingEnabled = false;
+                }
+            });
+            
+            this.addLog('cheat', 'Visual quality reduced');
+        }
+        
+        clearCache() {
+            // Clear various caches
+            if ('caches' in window) {
+                caches.keys().then(names => {
+                    names.forEach(name => caches.delete(name));
+                });
             }
-            this.lastFrameTime = Date.now();
             
-            // Update stats
-            const fpsElement = this.container.querySelector('#fps-counter');
-            if (fpsElement) fpsElement.textContent = fps + ' FPS';
+            // Clear storage
+            localStorage.clear();
+            sessionStorage.clear();
             
-            // Memory
-            if (performance.memory) {
-                const memory = Math.round(performance.memory.usedJSHeapSize / 1024 / 1024);
-                const memoryElement = this.container.querySelector('#memory-usage');
-                if (memoryElement) memoryElement.textContent = memory + ' MB';
+            this.addLog('cheat', 'Cache and storage cleared');
+        }
+        
+        stopAllTimers() {
+            // Get all timeout/interval IDs and clear them
+            const highestId = setTimeout(() => {}, 0);
+            for (let i = 0; i < highestId; i++) {
+                clearTimeout(i);
+                clearInterval(i);
             }
-            
-            // Other stats
-            const timerElement = this.container.querySelector('#timer-count');
-            if (timerElement) timerElement.textContent = this.getActiveTimersCount();
-            
-            const domElement = this.container.querySelector('#dom-count');
-            if (domElement) domElement.textContent = document.querySelectorAll('*').length;
-            
-            const storageElement = this.container.querySelector('#storage-usage');
-            if (storageElement) storageElement.textContent = this.getStorageSize('localStorage');
+            this.addLog('cheat', 'All timers stopped');
         }
         
-        getActiveTimersCount() {
-            // Approximate count
-            return Math.round(Math.random() * 10 + 5);
-        }
-        
-        exportPerformanceData() {
-            const data = {
-                timestamp: Date.now(),
-                performance: performance.memory ? {
-                    memory: performance.memory,
-                    timing: performance.timing,
-                    navigation: performance.navigation
-                } : null,
-                systemInfo: this.container.querySelector('#system-info')?.textContent || ''
-            };
+        pauseGame() {
+            // Pause common game loops
+            window.gameLoop = function() {};
+            window.update = function() {};
+            window.render = function() {};
             
-            this.downloadJSON(data, 'performance-data-' + Date.now() + '.json');
-            this.addLog('info', 'Performance data exported');
+            this.addLog('cheat', 'Game paused (attempted)');
         }
         
         // Logging methods
+        logGUIAction(action) {
+            this.addLog('gui', action);
+        }
+        
         addLog(logType, message) {
             const timestamp = new Date().toLocaleTimeString();
             const log = {
@@ -2553,12 +3374,12 @@
             const totalElement = this.container.querySelector('#total-logs');
             const errorElement = this.container.querySelector('#error-logs');
             const warningElement = this.container.querySelector('#warning-logs');
-            const cheatElement = this.container.querySelector('#cheat-logs');
+            const guiElement = this.container.querySelector('#gui-logs');
             
             if (totalElement) totalElement.textContent = this.logs.length;
             if (errorElement) errorElement.textContent = this.logs.filter(l => l.type === 'error').length;
             if (warningElement) warningElement.textContent = this.logs.filter(l => l.type === 'warning').length;
-            if (cheatElement) cheatElement.textContent = this.logs.filter(l => l.type === 'cheat').length;
+            if (guiElement) guiElement.textContent = this.logs.filter(l => l.type === 'gui').length;
         }
         
         clearLogs() {
@@ -2580,97 +3401,13 @@
                     total: this.logs.length,
                     errors: this.logs.filter(l => l.type === 'error').length,
                     warnings: this.logs.filter(l => l.type === 'warning').length,
-                    cheats: this.logs.filter(l => l.type === 'cheat').length
+                    gui: this.logs.filter(l => l.type === 'gui').length
                 }
             };
             
-            this.downloadJSON(data, 'anticheat-tester-logs-' + Date.now() + '.json');
+            this.downloadJSON(data, 'toxivids-cheat-engine-logs-' + Date.now() + '.json');
             this.addLog('info', 'Logs exported to file');
         }
-        
-        importLogs() {
-            const input = document.createElement('input');
-            input.type = 'file';
-            input.accept = '.json';
-            
-            const self = this;
-            input.onchange = function(e) {
-                const file = e.target.files[0];
-                if (!file) return;
-                
-                const reader = new FileReader();
-                reader.onload = function(e) {
-                    try {
-                        const data = JSON.parse(e.target.result);
-                        if (data.logs && Array.isArray(data.logs)) {
-                            self.logs = data.logs.concat(self.logs);
-                            self.updateLogDisplay();
-                            self.updateLogStats();
-                            self.addLog('info', 'Imported ' + data.logs.length + ' logs from file');
-                        }
-                    } catch (error) {
-                        self.addLog('error', 'Failed to import logs: ' + error.message);
-                    }
-                };
-                reader.readAsText(file);
-            };
-            
-            input.click();
-        }
-        
-        // Placeholder methods for all the extra features
-        // (These would be fully implemented with actual functionality)
-        
-        // Website manipulation
-        disableAds() {
-            this.addLog('cheat', 'Ad blocking activated');
-        }
-        
-        enableCopyPaste() {
-            this.addLog('cheat', 'Copy/paste enabled');
-        }
-        
-        removeOverlays() {
-            this.addLog('cheat', 'Overlays removed');
-        }
-        
-        highlightClickableElements() {
-            this.addLog('cheat', 'Clickable elements highlighted');
-        }
-        
-        showPasswords() {
-            document.querySelectorAll('input[type="password"]').forEach(input => {
-                input.type = 'text';
-            });
-            this.addLog('cheat', 'Passwords revealed');
-        }
-        
-        // Game cheats
-        scanForGodMode() {
-            this.addLog('scan', 'Scanning for god mode variables...');
-        }
-        
-        enableSpeedHack() {
-            this.addLog('cheat', 'Speed hack enabled');
-        }
-        
-        enableNoClip() {
-            this.addLog('cheat', 'No-clip mode enabled');
-        }
-        
-        autoComplete() {
-            this.addLog('cheat', 'Auto-complete activated');
-        }
-        
-        unlockEverything() {
-            this.addLog('cheat', 'Everything unlocked');
-        }
-        
-        enableInfiniteResources() {
-            this.addLog('cheat', 'Infinite resources enabled');
-        }
-        
-        // And many more placeholder methods...
         
         // Utility methods
         downloadJSON(data, filename) {
@@ -2687,7 +3424,7 @@
         
         loadSettings() {
             try {
-                const settings = localStorage.getItem('anticheat-tester-settings');
+                const settings = localStorage.getItem('toxivids-cheat-engine-settings');
                 if (settings) {
                     const parsed = JSON.parse(settings);
                     this.position = parsed.position || this.position;
@@ -2705,7 +3442,7 @@
                     size: this.size,
                     logs: this.logs.slice(0, 100)
                 };
-                localStorage.setItem('anticheat-tester-settings', JSON.stringify(settings));
+                localStorage.setItem('toxivids-cheat-engine-settings', JSON.stringify(settings));
             } catch (e) {
                 this.addLog('warning', 'Failed to save settings');
             }
@@ -2718,75 +3455,20 @@
                 this.container.remove();
             }
         }
-        
-        // Add placeholder implementations for all missing methods referenced in the UI...
-        // (For brevity, I'm including key ones - the full implementation would include all)
-        
-        refreshDOM() { this.addLog('info', 'DOM refreshed'); }
-        selectDOMElement() { this.addLog('info', 'Select DOM element mode activated'); }
-        highlightElement() { this.addLog('info', 'Element highlighted'); }
-        deleteElement() { this.addLog('info', 'Element deleted'); }
-        cloneElement() { this.addLog('info', 'Element cloned'); }
-        toggleElementVisibility() { this.addLog('info', 'Element visibility toggled'); }
-        applyElementPosition() { this.addLog('info', 'Element position applied'); }
-        applyElementSize() { this.addLog('info', 'Element size applied'); }
-        applyBackgroundColor() { this.addLog('info', 'Background color applied'); }
-        applyBorder() { this.addLog('info', 'Border applied'); }
-        applyOpacity() { this.addLog('info', 'Opacity applied'); }
-        resetElementStyles() { this.addLog('info', 'Element styles reset'); }
-        
-        startFullScan() { this.addLog('scan', 'Full anti-cheat scan started'); }
-        startStealthScan() { this.addLog('scan', 'Stealth scan started'); }
-        startNetworkScan() { this.addLog('scan', 'Network scan started'); }
-        startMemoryProtectionScan() { this.addLog('scan', 'Memory protection scan started'); }
-        startBehaviorScan() { this.addLog('scan', 'Behavior scan started'); }
-        startCustomScan() { this.addLog('scan', 'Custom scan started'); }
-        
-        disableConsoleLogging() { this.addLog('cheat', 'Console logging disabled'); }
-        bypassDebugger() { this.addLog('cheat', 'Debugger bypassed'); }
-        hookCommonFunctions() { this.addLog('cheat', 'Common functions hooked'); }
-        spoofUserAgent() { this.addLog('cheat', 'User agent spoofed'); }
-        enableRightClick() { this.addLog('cheat', 'Right click enabled'); }
-        removeKeyListeners() { this.addLog('cheat', 'Key listeners removed'); }
-        
-        applySpeedMultiplier() { this.addLog('cheat', 'Speed multiplier applied'); }
-        interceptNetworkRequests() { this.addLog('cheat', 'Network requests intercepted'); }
-        modifyNetworkResponses() { this.addLog('cheat', 'Network responses modified'); }
-        fakeOfflineMode() { this.addLog('cheat', 'Fake offline mode enabled'); }
-        blockAnalytics() { this.addLog('cheat', 'Analytics blocked'); }
-        spoofLocation() { this.addLog('cheat', 'Location spoofed'); }
-        
-        findAPIKeys() { this.addLog('scan', 'Scanning for API keys...'); }
-        extractTokens() { this.addLog('scan', 'Extracting tokens...'); }
-        dumpStorage() { this.addLog('scan', 'Storage dumped'); }
-        analyzeCookies() { this.addLog('scan', 'Cookies analyzed'); }
-        findVulnerabilities() { this.addLog('scan', 'Vulnerability scan started'); }
-        
-        toggleDarkMode() { this.addLog('info', 'Dark mode toggled'); }
-        showZoomControls() { this.addLog('info', 'Zoom controls shown'); }
-        fullscreenAnyElement() { this.addLog('info', 'Fullscreen mode for any element'); }
-        disableAnimations() { this.addLog('info', 'Animations disabled'); }
-        applyCustomCSS() { this.addLog('info', 'Custom CSS applied'); }
-        
-        boostPerformance() { this.addLog('info', 'Performance boosted'); }
-        reduceQuality() { this.addLog('info', 'Quality reduced'); }
-        disableSounds() { this.addLog('info', 'Sounds disabled'); }
-        limitFPS() { this.addLog('info', 'FPS limited'); }
-        clearBrowserCache() { this.addLog('info', 'Browser cache cleared'); }
     }
     
     // Create global instance
-    if (window.anticheatTester) {
-        window.anticheatTester.destroy();
+    if (window.toxividsCheatEngine) {
+        window.toxividsCheatEngine.destroy();
     }
     
-    window.anticheatTester = new AnticheatTesterGUI();
+    window.toxividsCheatEngine = new ToxividsCheatEngine();
     
-    console.log('%c🛡️ Anticheat Tester v1.1 Loaded!', 'color: #00ff00; font-size: 16px; font-weight: bold;');
-    console.log('%cUse window.anticheatTester to access the instance', 'color: #0088ff;');
+    console.log('%c🔧 toxivids cheat engine v4 Loaded!', 'color: #00ff00; font-size: 16px; font-weight: bold;');
+    console.log('%cUse window.toxividsCheatEngine to access the instance', 'color: #0088ff;');
     console.log('%cGUI should be visible on your screen. Drag to move, resize from bottom-right corner.', 'color: #ffaa00;');
-    console.log('%cPress hotkeys to control autoclicker, backspace to remove selected memory items', 'color: #ffaa00;');
+    console.log('%cPress hotkeys to control autoclicker, backspace to remove selected items', 'color: #ffaa00;');
     
 })();
 
-// End of Anticheat Tester v1.1
+// End of toxivids cheat engine v4
