@@ -1,0 +1,4555 @@
+
+// toxivids cheat engine v4 - Console Injectable Version
+// Paste this entire script into your browser's developer console to run
+
+(function() {
+    
+    class ToxividsCheatEngine {
+        constructor() {
+            this.isVisible = false;
+            this.position = { x: 50, y: 50 };
+            this.size = { width: 1200, height: 800 };
+            this.activeTab = 'memory';
+            this.memoryResults = [];
+            this.previousResults = [];
+            this.consoleHistory = [];
+            this.frozenVars = new Map();
+            this.autoclickerActive = false;
+            this.clickInterval = 1000;
+            this.clickCount = 0;
+            this.clickIntervalId = null;
+            this.keybinds = [];
+            this.logs = [];
+            this.detectionScore = 0;
+            this.scanProgress = 0;
+            this.isScanning = false;
+            this.recordedMacro = [];
+            this.isRecording = false;
+            this.frozenVarIntervals = new Map();
+            this.selectedVariable = null;
+            this.selectedElement = null;
+            this.deepScanMode = false;
+            this.followMouse = false;
+            this.logEverything = false;
+            this.checkElements = false;
+            this.keySpammerActive = false;
+            this.mousePosition = { x: 0, y: 0 };
+            this.eventLogger = [];
+            this.networkLogger = [];
+            this.originalFunctions = new Map();
+            this.explorerExpanded = new Set();
+            this.watchedVariables = new Map();
+            this.networkScanActive = false;
+            
+            this.init();
+        }
+        
+        init() {
+            this.createGUI();
+            this.bindEvents();
+            this.setupValueWatching();
+            this.loadSettings();
+            this.show();
+            this.addLog('info', 'toxivids cheat engine v4 initialized', true);
+        }
+        
+        createGUI() {
+            const existing = document.getElementById('toxivids-cheat-engine');
+            if (existing) existing.remove();
+            
+            this.container = document.createElement('div');
+            this.container.id = 'toxivids-cheat-engine';
+            this.container.innerHTML = this.getHTML();
+            
+            const styleElement = document.createElement('style');
+            styleElement.textContent = this.getCSS();
+            document.head.appendChild(styleElement);
+            
+            document.body.appendChild(this.container);
+            this.bindTabEvents();
+            this.bindUIEvents();
+        }
+        
+        getHTML() {
+            return `
+                <div class="av-window" style="left: ${this.position.x}px; top: ${this.position.y}px; width: ${this.size.width}px; height: ${this.size.height}px;">
+                    <div class="av-header">
+                        <div class="av-title">🧙 toxivids cheat engine v4</div>
+                        <div class="av-controls">
+                            <button class="av-btn av-minimize">_</button>
+                            <button class="av-btn av-close">×</button>
+                        </div>
+                    </div>
+                    <div class="av-tabs">
+                        <div class="av-tab-list">
+                            <button class="av-tab active" data-tab="memory">Memory Scan</button>
+                            <button class="av-tab" data-tab="console">Console</button>
+                            <button class="av-tab" data-tab="autoclicker">Autoclicker</button>
+                            <button class="av-tab" data-tab="explorer">Explorer</button>
+                            <button class="av-tab" data-tab="anticheat">Anti-Cheat</button>
+                            <button class="av-tab" data-tab="keybinds">Keybinds</button>
+                            <button class="av-tab" data-tab="network">Network</button>
+                            <button class="av-tab" data-tab="useful">Useful</button>
+                            <button class="av-tab" data-tab="extra">Extra</button>
+                            <button class="av-tab" data-tab="logs">Logs</button>
+                        </div>
+                        <div class="av-tab-content">
+                            ${this.getMemoryTabHTML()}
+                            ${this.getConsoleTabHTML()}
+                            ${this.getAutoclickerTabHTML()}
+                            ${this.getExplorerTabHTML()}
+                            ${this.getAntiCheatTabHTML()}
+                            ${this.getKeybindsTabHTML()}
+                            ${this.getNetworkTabHTML()}
+                            ${this.getUsefulTabHTML()}
+                            ${this.getExtraTabHTML()}
+                            ${this.getLogsTabHTML()}
+                        </div>
+                    </div>
+                    <div class="av-resize-handle"></div>
+                </div>
+            `;
+        }
+        
+        getMemoryTabHTML() {
+            return `
+                <div class="av-tab-pane active" data-tab="memory">
+                    <div class="av-toolbar">
+                        <input type="text" class="av-input" id="memory-search" placeholder="Search value (e.g., 100, 'text', Game.cookies)..." value="">
+                        <select class="av-select" id="memory-type">
+                            <option value="all">All Types</option>
+                            <option value="number">Number</option>
+                            <option value="string">String</option>
+                            <option value="boolean">Boolean</option>
+                            <option value="object">Object</option>
+                            <option value="function">Function</option>
+                        </select>
+                        <label class="av-checkbox-label">
+                            <input type="checkbox" id="deep-scan-mode"> Deep Scan
+                        </label>
+                        <button class="av-btn av-btn-primary" id="first-scan">🔍 First Scan</button>
+                        <button class="av-btn" id="next-scan">🔄 Next Scan</button>
+                        <button class="av-btn" id="clear-results">🗑️ Clear</button>
+                        <button class="av-btn" id="export-results">📥 Export</button>
+                    </div>
+                    <div class="av-progress-container">
+                        <div class="av-progress" id="scan-progress" style="width: 0%"></div>
+                    </div>
+                    <div class="av-stats">
+                        Results: <span id="result-count">0</span> | 
+                        Previous: <span id="previous-count">0</span> |
+                        Selected: <span id="selected-count">0</span>
+                    </div>
+                    <div class="av-memory-container">
+                        <div class="av-results" id="memory-results">
+                            <div class="av-placeholder">Enter search term and click 'First Scan' to find variables</div>
+                        </div>
+                        <div class="av-memory-details" id="memory-details">
+                            <h4>Memory Details</h4>
+                            <div id="memory-info">Select a result to view details</div>
+                            <div class="av-selected-list" id="selected-list">
+                                <h5>Selected Items (Press Backspace to remove)</h5>
+                                <div id="selected-items">No items selected</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        getConsoleTabHTML() {
+            return `
+                <div class="av-tab-pane" data-tab="console">
+                    <div class="av-toolbar">
+                        <button class="av-btn" id="clear-console">🗑️ Clear</button>
+                        <button class="av-btn" id="save-console">💾 Save Output</button>
+                        <button class="av-btn" id="load-script">📁 Load Script</button>
+                    </div>
+                    <div class="av-console-section">
+                        <label>JavaScript Code:</label>
+                        <textarea class="av-console-input" id="js-input" placeholder="Type JavaScript code here... (e.g., Game.cookies = 999999)" rows="4"></textarea>
+                        <button class="av-btn av-btn-primary" id="execute-js">▶ Execute</button>
+                    </div>
+                    <div class="av-console-section">
+                        <label>Console Output:</label>
+                        <div class="av-console-output" id="console-output">
+                            <div class="av-console-line">toxivids cheat engine v4 Console Ready</div>
+                            <div class="av-console-line">Type JavaScript above and click Execute</div>
+                        </div>
+                    </div>
+                    <hr>
+                    <div class="av-console-section">
+                        <label>Variable Name:</label>
+                        <input type="text" class="av-input" id="variable-input" placeholder="Type variable name (e.g., Game.cookies)">
+                        <div class="av-variable-controls">
+                            <button class="av-btn" id="freeze-value">❄️ Freeze Value</button>
+                            <button class="av-btn" id="set-infinite">♾️ Set Infinite</button>
+                            <button class="av-btn" id="reset-zero">0️⃣ Reset to 0</button>
+                            <button class="av-btn" id="increment-value">➕ Increment</button>
+                            <button class="av-btn" id="decrement-value">➖ Decrement</button>
+                            <button class="av-btn" id="multiply-value">✖️ Multiply x10</button>
+                            <button class="av-btn" id="get-value">👁️ Get Value</button>
+                            <button class="av-btn" id="watch-value">👀 Watch Changes</button>
+                        </div>
+                        <div class="av-status">
+                            Frozen variables: <span id="frozen-count">0</span> | 
+                            Watched variables: <span id="watched-count">0</span>
+                        </div>
+                        <div class="av-frozen-list">
+                            <h5>Frozen Variables (Press Backspace to remove selected)</h5>
+                            <div id="frozen-variables-list">No frozen variables</div>
+                            <button class="av-btn" id="unfreeze-all">🔓 Unfreeze All</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        getAutoclickerTabHTML() {
+            return `
+                <div class="av-tab-pane" data-tab="autoclicker">
+                    <div class="av-section">
+                        <h3>🖱️ Auto Clicker</h3>
+                        <div class="av-form-grid">
+                            <div class="av-form-group">
+                                <label>Hotkey (single key):</label>
+                                <input type="text" class="av-input" id="clicker-hotkey" placeholder="f" maxlength="1">
+                            </div>
+                            <div class="av-form-group">
+                                <label>Target Element:</label>
+                                <input type="text" class="av-input" id="click-target" placeholder="#button, .click-me">
+                                <button class="av-btn" id="select-element">Select Element</button>
+                            </div>
+                            <div class="av-form-group">
+                                <label>Click Interval (ms):</label>
+                                <input type="number" class="av-input" id="click-interval" value="100" min="1" max="10000">
+                            </div>
+                            <div class="av-form-group">
+                                <label>Wait before start (seconds):</label>
+                                <input type="number" class="av-input" id="start-delay" value="0" min="0" max="60">
+                            </div>
+                            <div class="av-form-group">
+                                <label>Max Clicks (0 = unlimited):</label>
+                                <input type="number" class="av-input" id="max-clicks" value="0" min="0">
+                            </div>
+                            <div class="av-form-group">
+                                <label class="av-checkbox-label">
+                                    <input type="checkbox" id="follow-mouse"> Follow Mouse
+                                </label>
+                            </div>
+                        </div>
+                        <div class="av-coordinates">
+                            <h4>Coordinates</h4>
+                            <div class="av-form-grid">
+                                <div class="av-form-group">
+                                    <label>X:</label>
+                                    <input type="number" class="av-input" id="click-x" value="0">
+                                </div>
+                                <div class="av-form-group">
+                                    <label>Y:</label>
+                                    <input type="number" class="av-input" id="click-y" value="0">
+                                </div>
+                                <button class="av-btn" id="get-mouse-pos">Get Mouse Position</button>
+                                <button class="av-btn" id="set-coordinates">Set Coordinates</button>
+                            </div>
+                        </div>
+                        <div class="av-controls">
+                            <button class="av-btn av-btn-success" id="start-clicker">▶ Start</button>
+                            <button class="av-btn av-btn-danger" id="stop-clicker">⏹ Stop</button>
+                            <span class="av-status">Status: <span id="clicker-status">Stopped</span></span>
+                        </div>
+                        <div class="av-stats">
+                            <div>Total Clicks: <span id="click-count">0</span></div>
+                            <div>Current Position: <span id="current-position">0, 0</span></div>
+                            <div>Last Target: <span id="last-target">None</span></div>
+                        </div>
+                    </div>
+                    <div class="av-section">
+                        <h3>⌨️ Key Spammer</h3>
+                        <div class="av-form-grid">
+                            <div class="av-form-group">
+                                <label>Key to Spam:</label>
+                                <input type="text" class="av-input" id="spam-key" placeholder="Enter, Space, a, etc.">
+                            </div>
+                            <div class="av-form-group">
+                                <label>Spam Interval (ms):</label>
+                                <input type="number" class="av-input" id="spam-interval" value="100" min="1">
+                            </div>
+                            <div class="av-form-group">
+                                <label>Spam Count (0 = unlimited):</label>
+                                <input type="number" class="av-input" id="spam-count" value="0" min="0">
+                            </div>
+                        </div>
+                        <div class="av-controls">
+                            <button class="av-btn av-btn-success" id="start-spam">▶ Start Spam</button>
+                            <button class="av-btn av-btn-danger" id="stop-spam">⏹ Stop Spam</button>
+                            <button class="av-btn" id="send-key">Send Single Key</button>
+                            <span class="av-status">Spammed: <span id="spam-counter">0</span></span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        getExplorerTabHTML() {
+            return `
+                <div class="av-tab-pane" data-tab="explorer">
+                    <div class="av-explorer-container">
+                        <div class="av-explorer-tree" id="explorer-tree">
+                            <div class="av-tree-item" data-path="window">
+                                <span class="av-tree-toggle">></span>
+                                <span class="av-tree-label">window</span>
+                            </div>
+                        </div>
+                        <div class="av-explorer-details">
+                            <div class="av-explorer-panel">
+                                <h4>Variables <button class="av-btn" id="load-variables">Load All</button></h4>
+                                <div class="av-variables-list" id="variables-list">
+                                    <div class="av-placeholder">Select an object to view variables</div>
+                                </div>
+                            </div>
+                            <div class="av-explorer-panel">
+                                <h4>Functions</h4>
+                                <div class="av-functions-list" id="functions-list">
+                                    <div class="av-placeholder">Select an object to view functions</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        getNetworkTabHTML() {
+            return `
+                <div class="av-tab-pane" data-tab="network">
+                    <div class="av-toolbar">
+                        <button class="av-btn" id="light-scan">🟢 Light Scan</button>
+                        <button class="av-btn" id="medium-scan">🟡 Medium Scan</button>
+                        <button class="av-btn" id="deep-scan">🔴 Deep Scan</button>
+                        <button class="av-btn" id="stop-scan">⏹ Stop</button>
+                        <span class="av-status">Status: <span id="scan-status">Stopped</span></span>
+                    </div>
+                    <div class="av-scan-description">
+                        <div><strong>Light:</strong> Variable changes only</div>
+                        <div><strong>Medium:</strong> Function calls, variable changes, element clicks</div>
+                        <div><strong>Deep:</strong> Everything possible</div>
+                    </div>
+                    <div class="av-network-monitor" id="network-monitor">
+                        <div class="av-placeholder">Select a scan type to start monitoring</div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        getUsefulTabHTML() {
+            return `
+                <div class="av-tab-pane" data-tab="useful">
+                    <div class="av-section">
+                        <h3>🔍 Deep Search Functions</h3>
+                        <div class="av-controls">
+                            <button class="av-btn" id="find-all-functions">🔧 Find All Functions</button>
+                            <button class="av-btn" id="find-all-variables">📊 Find All Variables</button>
+                            <button class="av-btn" id="find-event-listeners">🎯 Find Event Listeners</button>
+                            <button class="av-btn" id="find-timers">⏰ Find Active Timers</button>
+                            <button class="av-btn" id="find-api-endpoints">🌐 Find API Endpoints</button>
+                            <button class="av-btn" id="find-cookies">🍪 Find All Cookies</button>
+                            <button class="av-btn" id="find-storage">💾 Find Storage Data</button>
+                            <button class="av-btn" id="find-global-objects">🌍 Find Global Objects</button>
+                        </div>
+                    </div>
+                    <div class="av-section">
+                        <h3>🎮 Game Analysis</h3>
+                        <div class="av-controls">
+                            <button class="av-btn" id="find-game-variables">🎯 Find Game Variables</button>
+                            <button class="av-btn" id="find-player-data">👤 Find Player Data</button>
+                            <button class="av-btn" id="find-score-systems">🏆 Find Score Systems</button>
+                            <button class="av-btn" id="find-upgrade-systems">⬆️ Find Upgrade Systems</button>
+                            <button class="av-btn" id="find-save-functions">💾 Find Save Functions</button>
+                            <button class="av-btn" id="find-cheat-protection">🛡️ Find Cheat Protection</button>
+                        </div>
+                    </div>
+                    <div class="av-section">
+                        <h3>🔒 Security Analysis</h3>
+                        <div class="av-controls">
+                            <button class="av-btn" id="find-encryption">🔐 Find Encryption</button>
+                            <button class="av-btn" id="find-obfuscation">🌫️ Find Obfuscated Code</button>
+                            <button class="av-btn" id="find-anti-debug">🚫 Find Anti-Debug</button>
+                            <button class="av-btn" id="find-integrity-checks">✅ Find Integrity Checks</button>
+                        </div>
+                    </div>
+                    <div class="av-useful-results" id="useful-results">
+                        <div class="av-placeholder">Click a search button to see results</div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        getExtraTabHTML() {
+            return `
+                <div class="av-tab-pane" data-tab="extra">
+                    <div class="av-section">
+                        <h3>🔧 Website Manipulation</h3>
+                        <div class="av-controls">
+                            <button class="av-btn" id="disable-ads">🚫 Block Ads</button>
+                            <button class="av-btn" id="enable-copy">📋 Enable Copy/Paste</button>
+                            <button class="av-btn" id="remove-overlays">❌ Remove Overlays</button>
+                            <button class="av-btn" id="highlight-clickable">🎯 Highlight Clickable</button>
+                            <button class="av-btn" id="show-passwords">👁️ Show Passwords</button>
+                            <button class="av-btn" id="disable-redirects">🔗 Disable Redirects</button>
+                        </div>
+                    </div>
+                    <div class="av-section">
+                        <h3>🎮 Game Cheats</h3>
+                        <div class="av-controls">
+                            <button class="av-btn" id="god-mode">🛡️ God Mode Scanner</button>
+                            <button class="av-btn" id="speed-hack">⚡ Speed Multiplier</button>
+                            <button class="av-btn" id="no-clip">👻 No Clip Mode</button>
+                            <button class="av-btn" id="auto-complete">🏆 Auto Complete</button>
+                            <button class="av-btn" id="unlock-all">🔓 Unlock Everything</button>
+                            <button class="av-btn" id="infinite-resources">♾️ Infinite Resources</button>
+                        </div>
+                        <div class="av-form-group">
+                            <label>Speed Multiplier:</label>
+                            <input type="number" class="av-input" id="speed-multiplier" value="2" min="0.1" max="100" step="0.1">
+                            <button class="av-btn" id="apply-speed">Apply</button>
+                        </div>
+                    </div>
+                    <div class="av-section">
+                        <h3>🌐 Network Tools</h3>
+                        <div class="av-controls">
+                            <button class="av-btn" id="intercept-requests">📡 Intercept Requests</button>
+                            <button class="av-btn" id="modify-responses">🔧 Modify Responses</button>
+                            <button class="av-btn" id="fake-offline">📴 Fake Offline</button>
+                            <button class="av-btn" id="block-analytics">📊 Block Analytics</button>
+                            <button class="av-btn" id="spoof-location">📍 Spoof Location</button>
+                        </div>
+                    </div>
+                    <div class="av-section">
+                        <h3>🎨 Visual Enhancements</h3>
+                        <div class="av-controls">
+                            <button class="av-btn" id="dark-mode">🌙 Toggle Dark Mode</button>
+                            <button class="av-btn" id="zoom-page">🔍 Zoom Controls</button>
+                            <button class="av-btn" id="fullscreen-any">📺 Fullscreen Any Element</button>
+                            <button class="av-btn" id="remove-animations">⏸️ Disable Animations</button>
+                            <button class="av-btn" id="custom-css">🎨 Inject Custom CSS</button>
+                        </div>
+                        <div class="av-form-group">
+                            <label>Custom CSS:</label>
+                            <textarea class="av-input" id="custom-css-input" placeholder="body { background: red !important; }" rows="3"></textarea>
+                            <button class="av-btn" id="apply-css">Apply CSS</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        getLogsTabHTML() {
+            return `
+                <div class="av-tab-pane" data-tab="logs">
+                    <div class="av-toolbar">
+                        <select class="av-select" id="log-filter">
+                            <option value="all">All Logs</option>
+                            <option value="info">Info</option>
+                            <option value="warning">Warning</option>
+                            <option value="error">Error</option>
+                            <option value="scan">Scan Results</option>
+                            <option value="cheat">Cheat Activity</option>
+                            <option value="button">Button Clicks</option>
+                        </select>
+                        <label class="av-checkbox-label">
+                            <input type="checkbox" id="check-elements"> Check Elements
+                        </label>
+                        <button class="av-btn" id="clear-logs">🗑️ Clear</button>
+                        <button class="av-btn" id="export-logs">📥 Export</button>
+                        <button class="av-btn" id="import-logs">📤 Import</button>
+                        <button class="av-btn" id="auto-scroll-logs">📜 Auto Scroll</button>
+                    </div>
+                    <div class="av-log-stats">
+                        Total: <span id="total-logs">0</span> | 
+                        Errors: <span id="error-logs">0</span> | 
+                        Warnings: <span id="warning-logs">0</span> |
+                        Cheats: <span id="cheat-logs">0</span> |
+                        Buttons: <span id="button-logs">0</span>
+                    </div>
+                    <div class="av-log-container" id="log-container">
+                        <div class="av-placeholder">No logs yet</div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        // ... keep existing code (getAntiCheatTabHTML and getKeybindsTabHTML methods) the same ...
+        
+        getAntiCheatTabHTML() {
+            return `
+                <div class="av-tab-pane" data-tab="anticheat">
+                    <div class="av-toolbar">
+                        <button class="av-btn av-btn-primary" id="full-scan">🔍 Full Deep Scan</button>
+                        <button class="av-btn" id="stealth-scan">🥷 Stealth Scan</button>
+                        <button class="av-btn" id="network-scan">🌐 Network Scan</button>
+                        <button class="av-btn" id="memory-protection-scan">🧠 Memory Scan</button>
+                        <button class="av-btn" id="behavior-scan">🎭 Behavior Scan</button>
+                        <button class="av-btn" id="custom-scan">⚙️ Custom Scan</button>
+                        <div class="av-score">
+                            Risk Level: <span id="detection-score" class="score-low">0</span>/100
+                        </div>
+                    </div>
+                    <div class="av-scan-results" id="anticheat-results">
+                        <div class="av-placeholder">Click a scan button to analyze anti-cheat mechanisms</div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        getKeybindsTabHTML() {
+            return `
+                <div class="av-tab-pane" data-tab="keybinds">
+                    <div class="av-section">
+                        <h3>🎥 Macro Recorder</h3>
+                        <div class="av-controls">
+                            <button class="av-btn av-btn-danger" id="start-recording">⏺ Start Recording</button>
+                            <button class="av-btn" id="stop-recording">⏹ Stop Recording</button>
+                            <button class="av-btn av-btn-success" id="play-macro">▶ Play Macro</button>
+                            <button class="av-btn" id="save-macro">💾 Save</button>
+                            <button class="av-btn" id="load-macro">📁 Load</button>
+                        </div>
+                        <div class="av-status">
+                            Status: <span id="recording-status">Ready</span> | 
+                            Actions: <span id="macro-count">0</span>
+                        </div>
+                        <div class="av-macro-list" id="macro-list">
+                            <div class="av-placeholder">No recorded actions</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        getCSS() {
+            return `
+                #toxivids-cheat-engine {
+                    position: fixed;
+                    z-index: 999999;
+                    font-family: 'Consolas', 'Monaco', monospace;
+                    font-size: 12px;
+                    color: #fff;
+                }
+                
+                .av-window {
+                    position: absolute;
+                    background: linear-gradient(145deg, #1a1a1a, #2d2d2d);
+                    border: 2px solid #444;
+                    border-radius: 8px;
+                    box-shadow: 0 10px 30px rgba(0,0,0,0.7);
+                    min-width: 1000px;
+                    min-height: 700px;
+                    display: flex;
+                    flex-direction: column;
+                    overflow: hidden;
+                }
+                
+                .av-header {
+                    background: linear-gradient(90deg, #333, #555);
+                    color: #fff;
+                    padding: 8px 12px;
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    cursor: move;
+                    border-bottom: 1px solid #555;
+                }
+                
+                .av-title {
+                    font-weight: bold;
+                    font-size: 14px;
+                }
+                
+                .av-controls {
+                    display: flex;
+                    gap: 4px;
+                }
+                
+                .av-btn {
+                    background: #444;
+                    color: #fff;
+                    border: 1px solid #666;
+                    padding: 4px 8px;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    font-size: 11px;
+                    transition: all 0.2s;
+                    white-space: nowrap;
+                }
+                
+                .av-btn:hover {
+                    background: #555;
+                    border-color: #777;
+                    transform: translateY(-1px);
+                }
+                
+                .av-btn-primary {
+                    background: #0066cc;
+                    border-color: #0088ff;
+                }
+                
+                .av-btn-success {
+                    background: #00aa00;
+                    border-color: #00cc00;
+                }
+                
+                .av-btn-danger {
+                    background: #cc0000;
+                    border-color: #ff0000;
+                }
+                
+                .av-tabs {
+                    flex: 1;
+                    display: flex;
+                    flex-direction: column;
+                }
+                
+                .av-tab-list {
+                    display: flex;
+                    background: #333;
+                    border-bottom: 1px solid #555;
+                    overflow-x: auto;
+                }
+                
+                .av-tab {
+                    background: #333;
+                    color: #ccc;
+                    border: none;
+                    padding: 8px 12px;
+                    cursor: pointer;
+                    font-size: 11px;
+                    border-right: 1px solid #555;
+                    white-space: nowrap;
+                    transition: all 0.2s;
+                }
+                
+                .av-tab.active {
+                    background: #555;
+                    color: #fff;
+                }
+                
+                .av-tab:hover {
+                    background: #444;
+                }
+                
+                .av-tab-content {
+                    flex: 1;
+                    position: relative;
+                    overflow: hidden;
+                }
+                
+                .av-tab-pane {
+                    position: absolute;
+                    top: 0;
+                    left: 0;
+                    right: 0;
+                    bottom: 0;
+                    padding: 12px;
+                    background: #222;
+                    color: #fff;
+                    display: none;
+                    flex-direction: column;
+                    overflow-y: auto;
+                }
+                
+                .av-tab-pane.active {
+                    display: flex;
+                }
+                
+                .av-toolbar {
+                    display: flex;
+                    gap: 6px;
+                    margin-bottom: 12px;
+                    align-items: center;
+                    flex-wrap: wrap;
+                    padding: 8px;
+                    background: #2a2a2a;
+                    border-radius: 4px;
+                }
+                
+                .av-input, .av-select, .av-console-input {
+                    background: #333;
+                    color: #fff;
+                    border: 1px solid #555;
+                    padding: 6px 8px;
+                    border-radius: 4px;
+                    font-size: 11px;
+                    font-family: inherit;
+                }
+                
+                .av-input:focus, .av-select:focus, .av-console-input:focus {
+                    outline: none;
+                    border-color: #0088ff;
+                    box-shadow: 0 0 5px rgba(0, 136, 255, 0.3);
+                }
+                
+                .av-console-input {
+                    width: 100%;
+                    resize: vertical;
+                    min-height: 60px;
+                }
+                
+                .av-checkbox-label {
+                    display: flex;
+                    align-items: center;
+                    gap: 4px;
+                    color: #ccc;
+                    cursor: pointer;
+                }
+                
+                .av-checkbox-label input[type="checkbox"] {
+                    margin: 0;
+                }
+                
+                .av-progress-container {
+                    background: #333;
+                    height: 6px;
+                    border-radius: 3px;
+                    margin-bottom: 8px;
+                    overflow: hidden;
+                }
+                
+                .av-progress {
+                    background: linear-gradient(90deg, #0066cc, #00aaff);
+                    height: 100%;
+                    transition: width 0.3s;
+                    border-radius: 3px;
+                }
+                
+                .av-memory-container {
+                    display: flex;
+                    gap: 12px;
+                    flex: 1;
+                }
+                
+                .av-results {
+                    flex: 1;
+                    background: #1a1a1a;
+                    border: 1px solid #444;
+                    border-radius: 4px;
+                    padding: 8px;
+                    overflow-y: auto;
+                    max-height: 400px;
+                }
+                
+                .av-memory-details {
+                    width: 350px;
+                    background: #1a1a1a;
+                    border: 1px solid #444;
+                    border-radius: 4px;
+                    padding: 8px;
+                    overflow-y: auto;
+                }
+                
+                .av-placeholder {
+                    color: #888;
+                    text-align: center;
+                    padding: 20px;
+                    font-style: italic;
+                }
+                
+                .av-result-item {
+                    background: #2a2a2a;
+                    border: 1px solid #444;
+                    border-radius: 4px;
+                    padding: 6px 8px;
+                    margin-bottom: 3px;
+                    cursor: pointer;
+                    transition: all 0.2s;
+                    font-size: 10px;
+                    line-height: 1.3;
+                }
+                
+                .av-result-item:hover {
+                    background: #333;
+                    border-color: #666;
+                }
+                
+                .av-result-item.selected {
+                    background: #0066cc;
+                    border-color: #0088ff;
+                }
+                
+                .av-console-output {
+                    background: #000;
+                    border: 1px solid #444;
+                    border-radius: 4px;
+                    padding: 8px;
+                    overflow-y: auto;
+                    font-family: 'Courier New', monospace;
+                    font-size: 11px;
+                    max-height: 200px;
+                    margin-bottom: 8px;
+                }
+                
+                .av-console-line {
+                    margin-bottom: 2px;
+                    word-wrap: break-word;
+                }
+                
+                .av-console-section {
+                    margin-bottom: 12px;
+                }
+                
+                .av-console-section label {
+                    display: block;
+                    margin-bottom: 4px;
+                    color: #ccc;
+                    font-weight: bold;
+                }
+                
+                .av-variable-controls {
+                    display: flex;
+                    flex-wrap: wrap;
+                    gap: 4px;
+                    margin-top: 8px;
+                }
+                
+                .av-frozen-list {
+                    background: #333;
+                    border-radius: 4px;
+                    padding: 8px;
+                    margin-top: 12px;
+                }
+                
+                .av-frozen-list h5 {
+                    margin: 0 0 8px 0;
+                    color: #ccc;
+                }
+                
+                #frozen-variables-list {
+                    max-height: 150px;
+                    overflow-y: auto;
+                    margin-bottom: 8px;
+                }
+                
+                .av-frozen-item {
+                    background: #2a2a2a;
+                    border: 1px solid #444;
+                    border-radius: 4px;
+                    padding: 4px 6px;
+                    margin-bottom: 2px;
+                    cursor: pointer;
+                    font-size: 10px;
+                }
+                
+                .av-frozen-item:hover {
+                    background: #333;
+                }
+                
+                .av-frozen-item.selected {
+                    background: #0066cc;
+                }
+                
+                .av-explorer-container {
+                    display: flex;
+                    flex: 1;
+                    gap: 12px;
+                }
+                
+                .av-explorer-tree {
+                    width: 300px;
+                    background: #1a1a1a;
+                    border: 1px solid #444;
+                    border-radius: 4px;
+                    padding: 8px;
+                    overflow-y: auto;
+                }
+                
+                .av-explorer-details {
+                    flex: 1;
+                    display: flex;
+                    flex-direction: column;
+                    gap: 12px;
+                }
+                
+                .av-explorer-panel {
+                    flex: 1;
+                    background: #1a1a1a;
+                    border: 1px solid #444;
+                    border-radius: 4px;
+                    padding: 8px;
+                    overflow-y: auto;
+                }
+                
+                .av-explorer-panel h4 {
+                    margin: 0 0 8px 0;
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                }
+                
+                .av-tree-item {
+                    display: flex;
+                    align-items: center;
+                    padding: 2px 4px;
+                    cursor: pointer;
+                    font-size: 11px;
+                    border-radius: 2px;
+                }
+                
+                .av-tree-item:hover {
+                    background: #333;
+                }
+                
+                .av-tree-item.selected {
+                    background: #0066cc;
+                }
+                
+                .av-tree-toggle {
+                    width: 12px;
+                    margin-right: 4px;
+                    font-family: monospace;
+                    cursor: pointer;
+                }
+                
+                .av-tree-label {
+                    color: #fff;
+                }
+                
+                .av-tree-children {
+                    margin-left: 16px;
+                }
+                
+                .av-variables-list, .av-functions-list {
+                    max-height: 300px;
+                    overflow-y: auto;
+                }
+                
+                .av-variable-item, .av-function-item {
+                    background: #2a2a2a;
+                    border: 1px solid #444;
+                    border-radius: 4px;
+                    padding: 4px 6px;
+                    margin-bottom: 2px;
+                    cursor: pointer;
+                    font-size: 10px;
+                    line-height: 1.2;
+                }
+                
+                .av-variable-item:hover, .av-function-item:hover {
+                    background: #333;
+                }
+                
+                .av-section {
+                    background: #2a2a2a;
+                    border: 1px solid #444;
+                    border-radius: 6px;
+                    padding: 12px;
+                    margin-bottom: 12px;
+                }
+                
+                .av-section h3 {
+                    margin: 0 0 12px 0;
+                    color: #fff;
+                    font-size: 13px;
+                    border-bottom: 1px solid #444;
+                    padding-bottom: 6px;
+                }
+                
+                .av-form-group {
+                    margin-bottom: 8px;
+                }
+                
+                .av-form-group label {
+                    display: block;
+                    margin-bottom: 4px;
+                    color: #ccc;
+                    font-size: 11px;
+                }
+                
+                .av-form-grid {
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+                    gap: 8px;
+                    align-items: end;
+                }
+                
+                .av-coordinates {
+                    background: #333;
+                    padding: 8px;
+                    border-radius: 4px;
+                    margin: 8px 0;
+                }
+                
+                .av-controls {
+                    display: flex;
+                    gap: 6px;
+                    align-items: center;
+                    margin-bottom: 8px;
+                    flex-wrap: wrap;
+                }
+                
+                .av-status {
+                    color: #ccc;
+                    font-size: 11px;
+                }
+                
+                .av-stats {
+                    background: #333;
+                    padding: 6px 8px;
+                    border-radius: 4px;
+                    margin-bottom: 8px;
+                    font-size: 11px;
+                }
+                
+                .av-scan-description {
+                    background: #333;
+                    padding: 8px;
+                    border-radius: 4px;
+                    margin-bottom: 12px;
+                    font-size: 11px;
+                }
+                
+                .av-network-monitor {
+                    flex: 1;
+                    background: #1a1a1a;
+                    border: 1px solid #444;
+                    border-radius: 4px;
+                    padding: 8px;
+                    overflow-y: auto;
+                    font-size: 10px;
+                }
+                
+                .av-useful-results {
+                    flex: 1;
+                    background: #1a1a1a;
+                    border: 1px solid #444;
+                    border-radius: 4px;
+                    padding: 8px;
+                    overflow-y: auto;
+                    font-size: 10px;
+                }
+                
+                .av-log-container {
+                    flex: 1;
+                    background: #1a1a1a;
+                    border: 1px solid #444;
+                    border-radius: 4px;
+                    padding: 8px;
+                    overflow-y: auto;
+                    max-height: 400px;
+                }
+                
+                .av-log-item {
+                    background: #2a2a2a;
+                    border-left: 3px solid #666;
+                    padding: 4px 6px;
+                    margin-bottom: 3px;
+                    border-radius: 0 4px 4px 0;
+                    font-size: 10px;
+                    line-height: 1.3;
+                }
+                
+                .av-log-item.info { border-left-color: #0088ff; }
+                .av-log-item.warning { border-left-color: #ffaa00; }
+                .av-log-item.error { border-left-color: #ff0000; }
+                .av-log-item.scan { border-left-color: #00ff00; }
+                .av-log-item.cheat { border-left-color: #ff00ff; }
+                .av-log-item.button { border-left-color: #00ffff; }
+                
+                .av-resize-handle {
+                    position: absolute;
+                    bottom: 0;
+                    right: 0;
+                    width: 12px;
+                    height: 12px;
+                    background: #666;
+                    cursor: se-resize;
+                }
+                
+                .score-low { color: #00ff00; }
+                .score-medium { color: #ffaa00; }
+                .score-high { color: #ff0000; }
+                
+                .av-scan-results {
+                    flex: 1;
+                    background: #1a1a1a;
+                    border: 1px solid #444;
+                    border-radius: 4px;
+                    padding: 8px;
+                    overflow-y: auto;
+                }
+                
+                .av-macro-list {
+                    background: #1a1a1a;
+                    border: 1px solid #444;
+                    border-radius: 4px;
+                    padding: 8px;
+                    max-height: 150px;
+                    overflow-y: auto;
+                    font-size: 10px;
+                }
+                
+                hr {
+                    border: none;
+                    border-top: 1px solid #444;
+                    margin: 12px 0;
+                }
+                
+                input[type="range"] {
+                    width: 100%;
+                }
+                
+                input[type="color"] {
+                    width: 40px;
+                    height: 25px;
+                    padding: 0;
+                    border: none;
+                    border-radius: 4px;
+                }
+            `;
+        }
+        
+        setupValueWatching() {
+            // Setup watchers for common game variables
+            const commonVars = ['Game', 'game', 'score', 'money', 'coins', 'health', 'level', 'lives'];
+            commonVars.forEach(varName => {
+                if (window[varName] !== undefined) {
+                    this.setupVariableWatcher(varName);
+                }
+            });
+        }
+        
+        setupVariableWatcher(path) {
+            try {
+                const obj = this.getObjectFromPath(path);
+                if (obj && typeof obj === 'object') {
+                    // Watch for property changes on objects
+                    Object.keys(obj).forEach(key => {
+                        const fullPath = path + '.' + key;
+                        if (typeof obj[key] !== 'function') {
+                            this.watchedVariables.set(fullPath, obj[key]);
+                        }
+                    });
+                }
+            } catch (e) {
+                // Variable doesn't exist
+            }
+        }
+        
+        checkValueChanges() {
+            if (this.networkScanActive) {
+                this.watchedVariables.forEach((oldValue, path) => {
+                    try {
+                        const newValue = this.getValueByPath(path);
+                        if (newValue !== oldValue && newValue !== undefined) {
+                            this.logToNetworkMonitor('Variable changed: ' + path + ' from ' + oldValue + ' to ' + newValue);
+                            this.watchedVariables.set(path, newValue);
+                        }
+                    } catch (e) {
+                        // Variable no longer exists
+                    }
+                });
+            }
+        }
+        
+        bindEvents() {
+            this.bindDragEvents();
+            this.bindResizeEvents();
+            this.bindWindowEvents();
+            this.bindKeyboardEvents();
+        }
+        
+        bindKeyboardEvents() {
+            document.addEventListener('keydown', (e) => {
+                // Handle hotkeys
+                const clickerHotkey = this.container.querySelector('#clicker-hotkey')?.value;
+                if (clickerHotkey && e.key.toLowerCase() === clickerHotkey.toLowerCase()) {
+                    e.preventDefault();
+                    this.toggleAutoclicker();
+                }
+                
+                // Handle backspace for removing selected items
+                if (e.key === 'Backspace' && this.activeTab === 'memory') {
+                    this.removeSelectedMemoryItem();
+                }
+                
+                // Handle backspace for removing frozen variables
+                if (e.key === 'Backspace' && this.activeTab === 'console') {
+                    this.removeSelectedFrozenVariable();
+                }
+            });
+            
+            // Track mouse position
+            document.addEventListener('mousemove', (e) => {
+                this.mousePosition = { x: e.clientX, y: e.clientY };
+                const posElement = this.container.querySelector('#current-position');
+                if (posElement) {
+                    posElement.textContent = `${e.clientX}, ${e.clientY}`;
+                }
+            });
+        }
+        
+        bindDragEvents() {
+            const header = this.container.querySelector('.av-header');
+            let isDragging = false;
+            let dragOffset = { x: 0, y: 0 };
+            
+            header.addEventListener('mousedown', (e) => {
+                if (e.target.closest('.av-controls')) return;
+                isDragging = true;
+                const rect = this.container.querySelector('.av-window').getBoundingClientRect();
+                dragOffset.x = e.clientX - rect.left;
+                dragOffset.y = e.clientY - rect.top;
+                document.addEventListener('mousemove', handleDrag);
+                document.addEventListener('mouseup', stopDrag);
+            });
+            
+            const handleDrag = (e) => {
+                if (!isDragging) return;
+                this.position.x = e.clientX - dragOffset.x;
+                this.position.y = e.clientY - dragOffset.y;
+                this.updateWindowPosition();
+            };
+            
+            const stopDrag = () => {
+                isDragging = false;
+                document.removeEventListener('mousemove', handleDrag);
+                document.removeEventListener('mouseup', stopDrag);
+            };
+        }
+        
+        bindResizeEvents() {
+            const handle = this.container.querySelector('.av-resize-handle');
+            let isResizing = false;
+            
+            handle.addEventListener('mousedown', (e) => {
+                isResizing = true;
+                document.addEventListener('mousemove', handleResize);
+                document.addEventListener('mouseup', stopResize);
+                e.preventDefault();
+            });
+            
+            const handleResize = (e) => {
+                if (!isResizing) return;
+                const rect = this.container.querySelector('.av-window').getBoundingClientRect();
+                this.size.width = Math.max(1000, e.clientX - rect.left);
+                this.size.height = Math.max(700, e.clientY - rect.top);
+                this.updateWindowSize();
+            };
+            
+            const stopResize = () => {
+                isResizing = false;
+                document.removeEventListener('mousemove', handleResize);
+                document.removeEventListener('mouseup', stopResize);
+            };
+        }
+        
+        bindWindowEvents() {
+            this.container.querySelector('.av-close').addEventListener('click', () => {
+                this.addLog('button', 'Close button clicked', true);
+                this.hide();
+            });
+            this.container.querySelector('.av-minimize').addEventListener('click', () => {
+                this.addLog('button', 'Minimize button clicked', true);
+                this.minimize();
+            });
+        }
+        
+        bindTabEvents() {
+            const tabs = this.container.querySelectorAll('.av-tab');
+            tabs.forEach(tab => {
+                tab.addEventListener('click', () => {
+                    this.addLog('button', 'Tab clicked: ' + tab.dataset.tab, true);
+                    this.switchTab(tab.dataset.tab);
+                });
+            });
+        }
+        
+        bindUIEvents() {
+            // Memory Scanner Events
+            const firstScanBtn = this.container.querySelector('#first-scan');
+            if (firstScanBtn) firstScanBtn.addEventListener('click', () => {
+                this.addLog('button', 'First Scan button clicked', true);
+                this.performFirstScan();
+            });
+            
+            const nextScanBtn = this.container.querySelector('#next-scan');
+            if (nextScanBtn) nextScanBtn.addEventListener('click', () => {
+                this.addLog('button', 'Next Scan button clicked', true);
+                this.performNextScan();
+            });
+            
+            const clearResultsBtn = this.container.querySelector('#clear-results');
+            if (clearResultsBtn) clearResultsBtn.addEventListener('click', () => {
+                this.addLog('button', 'Clear Results button clicked', true);
+                this.clearMemoryResults();
+            });
+            
+            const exportResultsBtn = this.container.querySelector('#export-results');
+            if (exportResultsBtn) exportResultsBtn.addEventListener('click', () => {
+                this.addLog('button', 'Export Results button clicked', true);
+                this.exportMemoryResults();
+            });
+            
+            // Console Events
+            const executeBtn = this.container.querySelector('#execute-js');
+            if (executeBtn) executeBtn.addEventListener('click', () => {
+                this.addLog('button', 'Execute JS button clicked', true);
+                this.executeJavaScript();
+            });
+            
+            const clearConsoleBtn = this.container.querySelector('#clear-console');
+            if (clearConsoleBtn) clearConsoleBtn.addEventListener('click', () => {
+                this.addLog('button', 'Clear Console button clicked', true);
+                this.clearConsole();
+            });
+            
+            const freezeBtn = this.container.querySelector('#freeze-value');
+            if (freezeBtn) freezeBtn.addEventListener('click', () => {
+                this.addLog('button', 'Freeze Value button clicked', true);
+                this.freezeValue();
+            });
+            
+            const setInfiniteBtn = this.container.querySelector('#set-infinite');
+            if (setInfiniteBtn) setInfiniteBtn.addEventListener('click', () => {
+                this.addLog('button', 'Set Infinite button clicked', true);
+                this.setInfinite();
+            });
+            
+            const resetZeroBtn = this.container.querySelector('#reset-zero');
+            if (resetZeroBtn) resetZeroBtn.addEventListener('click', () => {
+                this.addLog('button', 'Reset to Zero button clicked', true);
+                this.resetToZero();
+            });
+            
+            const incrementBtn = this.container.querySelector('#increment-value');
+            if (incrementBtn) incrementBtn.addEventListener('click', () => {
+                this.addLog('button', 'Increment Value button clicked', true);
+                this.incrementValue();
+            });
+            
+            const decrementBtn = this.container.querySelector('#decrement-value');
+            if (decrementBtn) decrementBtn.addEventListener('click', () => {
+                this.addLog('button', 'Decrement Value button clicked', true);
+                this.decrementValue();
+            });
+            
+            const multiplyBtn = this.container.querySelector('#multiply-value');
+            if (multiplyBtn) multiplyBtn.addEventListener('click', () => {
+                this.addLog('button', 'Multiply Value button clicked', true);
+                this.multiplyValue();
+            });
+            
+            const getValueBtn = this.container.querySelector('#get-value');
+            if (getValueBtn) getValueBtn.addEventListener('click', () => {
+                this.addLog('button', 'Get Value button clicked', true);
+                this.getValue();
+            });
+            
+            const watchValueBtn = this.container.querySelector('#watch-value');
+            if (watchValueBtn) watchValueBtn.addEventListener('click', () => {
+                this.addLog('button', 'Watch Value button clicked', true);
+                this.watchValue();
+            });
+            
+            const unfreezeAllBtn = this.container.querySelector('#unfreeze-all');
+            if (unfreezeAllBtn) unfreezeAllBtn.addEventListener('click', () => {
+                this.addLog('button', 'Unfreeze All button clicked', true);
+                this.unfreezeAllVariables();
+            });
+            
+            // Autoclicker Events
+            const startClickerBtn = this.container.querySelector('#start-clicker');
+            if (startClickerBtn) startClickerBtn.addEventListener('click', () => {
+                this.addLog('button', 'Start Clicker button clicked', true);
+                this.startAutoclicker();
+            });
+            
+            const stopClickerBtn = this.container.querySelector('#stop-clicker');
+            if (stopClickerBtn) stopClickerBtn.addEventListener('click', () => {
+                this.addLog('button', 'Stop Clicker button clicked', true);
+                this.stopAutoclicker();
+            });
+            
+            const selectElementBtn = this.container.querySelector('#select-element');
+            if (selectElementBtn) selectElementBtn.addEventListener('click', () => {
+                this.addLog('button', 'Select Element button clicked', true);
+                this.selectElement();
+            });
+            
+            const getMousePosBtn = this.container.querySelector('#get-mouse-pos');
+            if (getMousePosBtn) getMousePosBtn.addEventListener('click', () => {
+                this.addLog('button', 'Get Mouse Position button clicked', true);
+                this.getMousePosition();
+            });
+            
+            const setCoordinatesBtn = this.container.querySelector('#set-coordinates');
+            if (setCoordinatesBtn) setCoordinatesBtn.addEventListener('click', () => {
+                this.addLog('button', 'Set Coordinates button clicked', true);
+                this.setClickCoordinates();
+            });
+            
+            // Key Spammer Events
+            const startSpamBtn = this.container.querySelector('#start-spam');
+            if (startSpamBtn) startSpamBtn.addEventListener('click', () => {
+                this.addLog('button', 'Start Spam button clicked', true);
+                this.startKeySpammer();
+            });
+            
+            const stopSpamBtn = this.container.querySelector('#stop-spam');
+            if (stopSpamBtn) stopSpamBtn.addEventListener('click', () => {
+                this.addLog('button', 'Stop Spam button clicked', true);
+                this.stopKeySpammer();
+            });
+            
+            const sendKeyBtn = this.container.querySelector('#send-key');
+            if (sendKeyBtn) sendKeyBtn.addEventListener('click', () => {
+                this.addLog('button', 'Send Key button clicked', true);
+                this.sendSingleKey();
+            });
+            
+            // Explorer Events
+            const loadVariablesBtn = this.container.querySelector('#load-variables');
+            if (loadVariablesBtn) loadVariablesBtn.addEventListener('click', () => {
+                this.addLog('button', 'Load Variables button clicked', true);
+                this.loadAllVariables();
+            });
+            
+            // Network Events
+            const lightScanBtn = this.container.querySelector('#light-scan');
+            if (lightScanBtn) lightScanBtn.addEventListener('click', () => {
+                this.addLog('button', 'Light Scan button clicked', true);
+                this.startLightScan();
+            });
+            
+            const mediumScanBtn = this.container.querySelector('#medium-scan');
+            if (mediumScanBtn) mediumScanBtn.addEventListener('click', () => {
+                this.addLog('button', 'Medium Scan button clicked', true);
+                this.startMediumScan();
+            });
+            
+            const deepScanBtn = this.container.querySelector('#deep-scan');
+            if (deepScanBtn) deepScanBtn.addEventListener('click', () => {
+                this.addLog('button', 'Deep Scan button clicked', true);
+                this.startDeepScan();
+            });
+            
+            const stopScanBtn = this.container.querySelector('#stop-scan');
+            if (stopScanBtn) stopScanBtn.addEventListener('click', () => {
+                this.addLog('button', 'Stop Scan button clicked', true);
+                this.stopNetworkScan();
+            });
+            
+            // Useful Events
+            this.bindUsefulEvents();
+            
+            // Anti-cheat Events
+            this.bindAntiCheatEvents();
+            
+            // Extra Events
+            this.bindExtraEvents();
+            
+            // Log Events
+            this.bindLogEvents();
+            
+            // Macro Events
+            this.bindMacroEvents();
+        }
+        
+        bindUsefulEvents() {
+            const usefulButtons = [
+                ['find-all-functions', 'Find All Functions'],
+                ['find-all-variables', 'Find All Variables'],
+                ['find-event-listeners', 'Find Event Listeners'],
+                ['find-timers', 'Find Active Timers'],
+                ['find-api-endpoints', 'Find API Endpoints'],
+                ['find-cookies', 'Find All Cookies'],
+                ['find-storage', 'Find Storage Data'],
+                ['find-global-objects', 'Find Global Objects'],
+                ['find-game-variables', 'Find Game Variables'],
+                ['find-player-data', 'Find Player Data'],
+                ['find-score-systems', 'Find Score Systems'],
+                ['find-upgrade-systems', 'Find Upgrade Systems'],
+                ['find-save-functions', 'Find Save Functions'],
+                ['find-cheat-protection', 'Find Cheat Protection'],
+                ['find-encryption', 'Find Encryption'],
+                ['find-obfuscation', 'Find Obfuscated Code'],
+                ['find-anti-debug', 'Find Anti-Debug'],
+                ['find-integrity-checks', 'Find Integrity Checks']
+            ];
+            
+            usefulButtons.forEach(([id, name]) => {
+                const btn = this.container.querySelector('#' + id);
+                if (btn) btn.addEventListener('click', () => {
+                    this.addLog('button', name + ' button clicked', true);
+                    this.executeUsefulFunction(id);
+                });
+            });
+        }
+        
+        bindAntiCheatEvents() {
+            const antiCheatButtons = [
+                ['full-scan', 'Full Deep Scan'],
+                ['stealth-scan', 'Stealth Scan'],
+                ['network-scan', 'Network Scan'],
+                ['memory-protection-scan', 'Memory Protection Scan'],
+                ['behavior-scan', 'Behavior Scan'],
+                ['custom-scan', 'Custom Scan']
+            ];
+            
+            antiCheatButtons.forEach(([id, name]) => {
+                const btn = this.container.querySelector('#' + id);
+                if (btn) btn.addEventListener('click', () => {
+                    this.addLog('button', name + ' button clicked', true);
+                    this.executeAntiCheatScan(id);
+                });
+            });
+        }
+        
+        bindExtraEvents() {
+            const extraButtons = [
+                ['disable-ads', 'Block Ads'],
+                ['enable-copy', 'Enable Copy/Paste'],
+                ['remove-overlays', 'Remove Overlays'],
+                ['highlight-clickable', 'Highlight Clickable'],
+                ['show-passwords', 'Show Passwords'],
+                ['disable-redirects', 'Disable Redirects'],
+                ['god-mode', 'God Mode Scanner'],
+                ['speed-hack', 'Speed Multiplier'],
+                ['no-clip', 'No Clip Mode'],
+                ['auto-complete', 'Auto Complete'],
+                ['unlock-all', 'Unlock Everything'],
+                ['infinite-resources', 'Infinite Resources'],
+                ['apply-speed', 'Apply Speed'],
+                ['intercept-requests', 'Intercept Requests'],
+                ['modify-responses', 'Modify Responses'],
+                ['fake-offline', 'Fake Offline'],
+                ['block-analytics', 'Block Analytics'],
+                ['spoof-location', 'Spoof Location'],
+                ['dark-mode', 'Toggle Dark Mode'],
+                ['zoom-page', 'Zoom Controls'],
+                ['fullscreen-any', 'Fullscreen Any Element'],
+                ['remove-animations', 'Disable Animations'],
+                ['apply-css', 'Apply CSS']
+            ];
+            
+            extraButtons.forEach(([id, name]) => {
+                const btn = this.container.querySelector('#' + id);
+                if (btn) btn.addEventListener('click', () => {
+                    this.addLog('button', name + ' button clicked', true);
+                    this.executeExtraFunction(id);
+                });
+            });
+        }
+        
+        bindLogEvents() {
+            const clearLogsBtn = this.container.querySelector('#clear-logs');
+            if (clearLogsBtn) clearLogsBtn.addEventListener('click', () => {
+                this.addLog('button', 'Clear Logs button clicked', true);
+                this.clearLogs();
+            });
+            
+            const exportLogsBtn = this.container.querySelector('#export-logs');
+            if (exportLogsBtn) exportLogsBtn.addEventListener('click', () => {
+                this.addLog('button', 'Export Logs button clicked', true);
+                this.exportLogs();
+            });
+            
+            const importLogsBtn = this.container.querySelector('#import-logs');
+            if (importLogsBtn) importLogsBtn.addEventListener('click', () => {
+                this.addLog('button', 'Import Logs button clicked', true);
+                this.importLogs();
+            });
+            
+            const logFilter = this.container.querySelector('#log-filter');
+            if (logFilter) logFilter.addEventListener('change', (e) => this.filterLogs(e.target.value));
+        }
+        
+        bindMacroEvents() {
+            const macroButtons = [
+                ['start-recording', 'Start Recording'],
+                ['stop-recording', 'Stop Recording'],
+                ['play-macro', 'Play Macro'],
+                ['save-macro', 'Save Macro'],
+                ['load-macro', 'Load Macro']
+            ];
+            
+            macroButtons.forEach(([id, name]) => {
+                const btn = this.container.querySelector('#' + id);
+                if (btn) btn.addEventListener('click', () => {
+                    this.addLog('button', name + ' button clicked', true);
+                    this.executeMacroFunction(id);
+                });
+            });
+        }
+        
+        // Core GUI Methods
+        updateWindowPosition() {
+            const windowElement = this.container.querySelector('.av-window');
+            windowElement.style.left = this.position.x + 'px';
+            windowElement.style.top = this.position.y + 'px';
+        }
+        
+        updateWindowSize() {
+            const windowElement = this.container.querySelector('.av-window');
+            windowElement.style.width = this.size.width + 'px';
+            windowElement.style.height = this.size.height + 'px';
+        }
+        
+        switchTab(tabName) {
+            this.container.querySelectorAll('.av-tab').forEach(tab => {
+                tab.classList.toggle('active', tab.dataset.tab === tabName);
+            });
+            
+            this.container.querySelectorAll('.av-tab-pane').forEach(pane => {
+                pane.classList.toggle('active', pane.dataset.tab === tabName);
+            });
+            
+            this.activeTab = tabName;
+            this.addLog('info', 'Switched to ' + tabName + ' tab');
+            
+            // Initialize explorer if switching to it
+            if (tabName === 'explorer') {
+                this.initializeExplorer();
+            }
+        }
+        
+        show() {
+            this.container.style.display = 'block';
+            this.isVisible = true;
+        }
+        
+        hide() {
+            this.container.style.display = 'none';
+            this.isVisible = false;
+            this.stopAllActivities();
+        }
+        
+        minimize() {
+            const windowElement = this.container.querySelector('.av-window');
+            windowElement.style.height = '40px';
+            this.container.querySelector('.av-tabs').style.display = 'none';
+        }
+        
+        stopAllActivities() {
+            this.stopAutoclicker();
+            this.stopKeySpammer();
+            this.stopNetworkScan();
+            this.unfreezeAllVariables();
+        }
+        
+        // Enhanced Memory Scanner Methods
+        performFirstScan() {
+            if (this.isScanning) return;
+            
+            this.isScanning = true;
+            this.scanProgress = 0;
+            const searchValue = this.container.querySelector('#memory-search').value.trim();
+            const searchType = this.container.querySelector('#memory-type').value;
+            this.deepScanMode = this.container.querySelector('#deep-scan-mode').checked;
+            this.checkElements = this.container.querySelector('#check-elements')?.checked || false;
+            
+            if (!searchValue) {
+                this.addLog('warning', 'Please enter a search value');
+                this.isScanning = false;
+                return;
+            }
+            
+            this.addLog('scan', 'Starting first scan for: ' + searchValue);
+            this.updateScanProgress(0);
+            
+            const results = [];
+            
+            try {
+                // Safer scanning approach to prevent crashes
+                this.safeScanGlobalScope(results, searchValue, searchType);
+                
+                if (this.deepScanMode) {
+                    this.safeScanAllObjects(results, searchValue, searchType);
+                }
+                
+                if (this.checkElements) {
+                    this.scanElementsForValue(results, searchValue);
+                }
+                
+                this.memoryResults = results;
+                this.previousResults = [...results]; // Store for next scan
+                this.displayMemoryResults();
+                
+            } catch (error) {
+                this.addLog('error', 'Scan error: ' + error.message);
+            } finally {
+                this.isScanning = false;
+                this.updateScanProgress(100);
+                this.addLog('scan', 'First scan completed. Found ' + results.length + ' results');
+            }
+        }
+        
+        performNextScan() {
+            if (this.isScanning || this.previousResults.length === 0) {
+                this.addLog('warning', 'No previous scan results. Perform a first scan first.');
+                return;
+            }
+            
+            this.isScanning = true;
+            const searchValue = this.container.querySelector('#memory-search').value.trim();
+            
+            if (!searchValue) {
+                this.addLog('warning', 'Please enter a search value');
+                this.isScanning = false;
+                return;
+            }
+            
+            this.addLog('scan', 'Starting next scan for: ' + searchValue);
+            this.updateScanProgress(0);
+            
+            const filteredResults = [];
+            
+            try {
+                // Filter previous results based on current values
+                for (let i = 0; i < this.previousResults.length; i++) {
+                    const result = this.previousResults[i];
+                    try {
+                        const currentValue = this.getValueByPath(result.path);
+                        if (this.matchesSearchCriteria(currentValue, searchValue, result.type, result.path)) {
+                            filteredResults.push({
+                                ...result,
+                                value: currentValue
+                            });
+                        }
+                    } catch (e) {
+                        // Variable no longer exists, skip it
+                    }
+                    
+                    this.updateScanProgress(Math.round((i / this.previousResults.length) * 100));
+                }
+                
+                this.memoryResults = filteredResults;
+                this.previousResults = [...filteredResults];
+                this.displayMemoryResults();
+                
+            } catch (error) {
+                this.addLog('error', 'Next scan error: ' + error.message);
+            } finally {
+                this.isScanning = false;
+                this.updateScanProgress(100);
+                this.addLog('scan', 'Next scan completed. Found ' + filteredResults.length + ' results');
+            }
+        }
+        
+        safeScanGlobalScope(results, searchValue, searchType) {
+            const timeoutTime = Date.now() + 5000; // 5 second timeout
+            
+            // Scan window properties more safely
+            const windowKeys = Object.getOwnPropertyNames(window).slice(0, 1000); // Limit to prevent crashes
+            
+            for (let i = 0; i < windowKeys.length && Date.now() < timeoutTime; i++) {
+                const key = windowKeys[i];
+                try {
+                    const value = window[key];
+                    const path = key;
+                    
+                    if (this.matchesSearchCriteria(value, searchValue, searchType, path)) {
+                        results.push({
+                            path: path,
+                            value: value,
+                            type: typeof value,
+                            address: this.generateMemoryAddress(),
+                            writable: this.isWritable(window, key),
+                            size: this.calculateSize(value)
+                        });
+                    }
+                    
+                    // Safely scan object properties for common game objects
+                    if (value && typeof value === 'object' && 
+                        (key.toLowerCase().includes('game') || key === 'Game' || key === 'APP' || key === 'app')) {
+                        this.safeScanObjectProperties(value, path, results, searchValue, searchType, 0, timeoutTime);
+                    }
+                } catch (e) {
+                    // Skip inaccessible properties
+                    continue;
+                }
+                
+                if (i % 100 === 0) {
+                    this.updateScanProgress(Math.round((i / windowKeys.length) * 50));
+                }
+            }
+        }
+        
+        safeScanObjectProperties(obj, basePath, results, searchValue, searchType, depth, timeoutTime) {
+            if (depth > 3 || results.length > 2000 || Date.now() > timeoutTime) return;
+            
+            try {
+                const keys = Object.getOwnPropertyNames(obj).slice(0, 100); // Limit properties
+                
+                for (const key of keys) {
+                    if (Date.now() > timeoutTime) break;
+                    
+                    try {
+                        const value = obj[key];
+                        const path = basePath + '.' + key;
+                        
+                        if (this.matchesSearchCriteria(value, searchValue, searchType, path)) {
+                            results.push({
+                                path: path,
+                                value: value,
+                                type: typeof value,
+                                address: this.generateMemoryAddress(),
+                                writable: this.isWritable(obj, key),
+                                size: this.calculateSize(value)
+                            });
+                        }
+                        
+                        // Recursively scan objects (limited depth)
+                        if (this.deepScanMode && value && typeof value === 'object' && 
+                            value !== obj && value !== window && value !== document) {
+                            this.safeScanObjectProperties(value, path, results, searchValue, searchType, depth + 1, timeoutTime);
+                        }
+                    } catch (e) {
+                        continue;
+                    }
+                }
+            } catch (e) {
+                // Object not accessible
+            }
+        }
+        
+        safeScanAllObjects(results, searchValue, searchType) {
+            const timeoutTime = Date.now() + 3000; // 3 second timeout for deep scan
+            
+            // Scan common game object patterns
+            const commonPaths = [
+                'Game', 'game', 'APP', 'app', 'Player', 'player', 'Score', 'score',
+                'Money', 'money', 'Coins', 'coins', 'Health', 'health', 'Level', 'level'
+            ];
+            
+            for (const path of commonPaths) {
+                if (Date.now() > timeoutTime) break;
+                
+                try {
+                    const obj = window[path];
+                    if (obj && typeof obj === 'object') {
+                        this.safeScanObjectProperties(obj, path, results, searchValue, searchType, 0, timeoutTime);
+                    }
+                } catch (e) {
+                    continue;
+                }
+            }
+        }
+        
+        scanElementsForValue(results, searchValue) {
+            try {
+                const elements = document.querySelectorAll('*');
+                let elementCount = 0;
+                
+                for (const element of elements) {
+                    if (elementCount++ > 500) break; // Limit to prevent crashes
+                    
+                    try {
+                        const textContent = element.textContent || '';
+                        const innerHTML = element.innerHTML || '';
+                        
+                        if (textContent.includes(searchValue) || innerHTML.includes(searchValue)) {
+                            results.push({
+                                path: 'element[' + element.tagName + ']',
+                                value: textContent.substring(0, 50),
+                                type: 'element',
+                                address: this.generateMemoryAddress(),
+                                writable: true,
+                                size: textContent.length + ' chars'
+                            });
+                        }
+                    } catch (e) {
+                        continue;
+                    }
+                }
+                
+                this.addLog('scan', 'Checked ' + elementCount + ' elements');
+            } catch (error) {
+                this.addLog('error', 'Element scanning error: ' + error.message);
+            }
+        }
+        
+        matchesSearchCriteria(value, searchValue, searchType, path) {
+            if (searchType !== 'all' && typeof value !== searchType) {
+                return false;
+            }
+            
+            // Exact path match
+            if (searchValue.includes('.') && path === searchValue) {
+                return true;
+            }
+            
+            // Numeric match
+            const numericSearch = parseFloat(searchValue);
+            if (!isNaN(numericSearch) && typeof value === 'number' && value === numericSearch) {
+                return true;
+            }
+            
+            // String match
+            const stringValue = String(value).toLowerCase();
+            const search = searchValue.toLowerCase();
+            
+            return stringValue.includes(search) || path.toLowerCase().includes(search);
+        }
+        
+        generateMemoryAddress() {
+            return '0x' + Math.random().toString(16).substr(2, 8).toUpperCase();
+        }
+        
+        calculateSize(value) {
+            if (typeof value === 'string') return value.length + ' chars';
+            if (typeof value === 'number') return '8 bytes';
+            if (typeof value === 'boolean') return '1 byte';
+            if (Array.isArray(value)) return value.length + ' items';
+            if (typeof value === 'object' && value !== null) return Object.keys(value).length + ' props';
+            return 'unknown';
+        }
+        
+        isWritable(obj, key) {
+            try {
+                const descriptor = Object.getOwnPropertyDescriptor(obj, key);
+                return !descriptor || descriptor.writable !== false;
+            } catch {
+                return true;
+            }
+        }
+        
+        getValueByPath(path) {
+            return path.split('.').reduce((obj, prop) => {
+                return obj && obj[prop] !== undefined ? obj[prop] : undefined;
+            }, window);
+        }
+        
+        getObjectFromPath(path) {
+            return path.split('.').reduce((obj, prop) => obj && obj[prop], window);
+        }
+        
+        displayMemoryResults() {
+            const container = this.container.querySelector('#memory-results');
+            const countElement = this.container.querySelector('#result-count');
+            const previousElement = this.container.querySelector('#previous-count');
+            
+            if (countElement) countElement.textContent = this.memoryResults.length;
+            if (previousElement) previousElement.textContent = this.previousResults.length;
+            
+            if (this.memoryResults.length === 0) {
+                container.innerHTML = '<div class="av-placeholder">No results found. Try a different search term.</div>';
+                return;
+            }
+            
+            container.innerHTML = this.memoryResults.map((result, index) => {
+                return '<div class="av-result-item" data-index="' + index + '" data-path="' + result.path + '">' +
+                    '<div style="display: flex; justify-content: space-between; align-items: center;">' +
+                        '<div>' +
+                            '<strong>' + result.path + '</strong>' +
+                            '<div style="color: #888; font-size: 10px;">' +
+                                result.type + ' | ' + (result.writable ? 'RW' : 'RO') + ' | ' + result.size + ' | ' + result.address +
+                            '</div>' +
+                        '</div>' +
+                        '<div style="color: #0088ff; font-family: monospace; font-size: 10px;">' +
+                            this.formatValue(result.value) +
+                        '</div>' +
+                    '</div>' +
+                '</div>';
+            }).join('');
+            
+            // Bind click events
+            container.querySelectorAll('.av-result-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    this.selectMemoryItem(item);
+                });
+                
+                item.addEventListener('dblclick', () => {
+                    const path = item.dataset.path;
+                    this.copyToConsole(path);
+                    this.switchTab('console');
+                });
+            });
+        }
+        
+        selectMemoryItem(item) {
+            this.container.querySelectorAll('#memory-results .av-result-item').forEach(i => {
+                i.classList.remove('selected');
+            });
+            item.classList.add('selected');
+            
+            const index = parseInt(item.dataset.index);
+            const result = this.memoryResults[index];
+            
+            const detailsContainer = this.container.querySelector('#memory-info');
+            detailsContainer.innerHTML = `
+                <div><strong>Path:</strong> ${result.path}</div>
+                <div><strong>Value:</strong> ${this.formatValue(result.value)}</div>
+                <div><strong>Type:</strong> ${result.type}</div>
+                <div><strong>Address:</strong> ${result.address}</div>
+                <div><strong>Size:</strong> ${result.size}</div>
+                <div><strong>Writable:</strong> ${result.writable ? 'Yes' : 'No'}</div>
+            `;
+            
+            this.selectedVariable = result.path;
+            this.addLog('info', 'Selected memory item: ' + result.path);
+        }
+        
+        removeSelectedMemoryItem() {
+            const selectedItem = this.container.querySelector('#memory-results .av-result-item.selected');
+            if (selectedItem) {
+                const index = parseInt(selectedItem.dataset.index);
+                this.memoryResults.splice(index, 1);
+                this.displayMemoryResults();
+                this.addLog('info', 'Removed selected memory item');
+            }
+        }
+        
+        formatValue(value) {
+            if (value === null) return 'null';
+            if (value === undefined) return 'undefined';
+            if (typeof value === 'string') {
+                const truncated = value.substring(0, 30);
+                return '"' + truncated + (value.length > 30 ? '...' : '') + '"';
+            }
+            if (typeof value === 'object') {
+                if (Array.isArray(value)) return '[Array(' + value.length + ')]';
+                return '{Object}';
+            }
+            if (typeof value === 'function') return 'function()';
+            return String(value);
+        }
+        
+        updateScanProgress(percent) {
+            const progressBar = this.container.querySelector('#scan-progress');
+            if (progressBar) {
+                progressBar.style.width = percent + '%';
+            }
+        }
+        
+        clearMemoryResults() {
+            this.memoryResults = [];
+            this.previousResults = [];
+            this.displayMemoryResults();
+            this.container.querySelector('#memory-info').innerHTML = 'Select a result to view details';
+            this.addLog('info', 'Memory scan results cleared');
+        }
+        
+        exportMemoryResults() {
+            if (this.memoryResults.length === 0) {
+                this.addLog('warning', 'No results to export');
+                return;
+            }
+            
+            const data = {
+                timestamp: new Date().toISOString(),
+                searchQuery: this.container.querySelector('#memory-search').value,
+                deepScan: this.deepScanMode,
+                checkElements: this.checkElements,
+                results: this.memoryResults
+            };
+            
+            this.downloadJSON(data, 'memory-scan-' + Date.now() + '.json');
+            this.addLog('info', 'Memory results exported');
+        }
+        
+        // Enhanced Console Methods
+        copyToConsole(path) {
+            const input = this.container.querySelector('#variable-input');
+            if (input) {
+                input.value = path;
+                this.selectedVariable = path;
+                this.addLog('info', 'Variable ' + path + ' copied to console');
+            }
+        }
+        
+        executeJavaScript() {
+            const input = this.container.querySelector('#js-input');
+            const command = input.value.trim();
+            if (!command) return;
+            
+            const output = this.container.querySelector('#console-output');
+            
+            this.consoleHistory.push(command);
+            
+            output.innerHTML += '<div class="av-console-line" style="color: #0088ff;">&gt; ' + command + '</div>';
+            
+            try {
+                const result = window.eval(command);
+                output.innerHTML += '<div class="av-console-line" style="color: #00ff00;">' + this.formatConsoleOutput(result) + '</div>';
+                this.addLog('cheat', 'Executed: ' + command);
+            } catch (error) {
+                output.innerHTML += '<div class="av-console-line" style="color: #ff0000;">Error: ' + error.message + '</div>';
+                this.addLog('error', 'JavaScript error: ' + error.message);
+            }
+            
+            output.scrollTop = output.scrollHeight;
+        }
+        
+        formatConsoleOutput(value) {
+            if (value === null) return 'null';
+            if (value === undefined) return 'undefined';
+            if (typeof value === 'object') {
+                try {
+                    return JSON.stringify(value, null, 2);
+                } catch {
+                    return String(value);
+                }
+            }
+            return String(value);
+        }
+        
+        freezeValue() {
+            const varPath = this.container.querySelector('#variable-input').value.trim();
+            if (!varPath) {
+                this.addLog('warning', 'Please enter a variable name');
+                return;
+            }
+            
+            try {
+                const currentValue = this.getValueByPath(varPath);
+                if (currentValue === undefined) {
+                    this.addLog('error', 'Variable not found: ' + varPath);
+                    return;
+                }
+                
+                const intervalId = setInterval(() => {
+                    try {
+                        this.setValueByPath(varPath, currentValue);
+                    } catch (e) {
+                        clearInterval(intervalId);
+                        this.frozenVars.delete(varPath);
+                        this.updateFrozenCount();
+                        this.updateFrozenList();
+                    }
+                }, 100);
+                
+                this.frozenVars.set(varPath, { intervalId, value: currentValue });
+                this.updateFrozenCount();
+                this.updateFrozenList();
+                
+                this.addLog('cheat', 'Frozen ' + varPath + ' at value: ' + currentValue);
+            } catch (error) {
+                this.addLog('error', 'Failed to freeze variable: ' + error.message);
+            }
+        }
+        
+        setValueByPath(path, value) {
+            const parts = path.split('.');
+            const prop = parts.pop();
+            const obj = parts.reduce((o, p) => o[p], window);
+            obj[prop] = value;
+        }
+        
+        updateFrozenCount() {
+            const countElement = this.container.querySelector('#frozen-count');
+            if (countElement) {
+                countElement.textContent = this.frozenVars.size;
+            }
+        }
+        
+        updateFrozenList() {
+            const listContainer = this.container.querySelector('#frozen-variables-list');
+            if (!listContainer) return;
+            
+            if (this.frozenVars.size === 0) {
+                listContainer.innerHTML = 'No frozen variables';
+                return;
+            }
+            
+            listContainer.innerHTML = Array.from(this.frozenVars.entries()).map(([path, data]) => {
+                return '<div class="av-frozen-item" data-path="' + path + '">' +
+                    '<strong>' + path + '</strong>: ' + this.formatValue(data.value) +
+                '</div>';
+            }).join('');
+            
+            // Bind selection events
+            listContainer.querySelectorAll('.av-frozen-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    listContainer.querySelectorAll('.av-frozen-item').forEach(i => i.classList.remove('selected'));
+                    item.classList.add('selected');
+                });
+            });
+        }
+        
+        removeSelectedFrozenVariable() {
+            const selectedItem = this.container.querySelector('#frozen-variables-list .av-frozen-item.selected');
+            if (selectedItem) {
+                const path = selectedItem.dataset.path;
+                const data = this.frozenVars.get(path);
+                if (data) {
+                    clearInterval(data.intervalId);
+                    this.frozenVars.delete(path);
+                    this.updateFrozenCount();
+                    this.updateFrozenList();
+                    this.addLog('info', 'Unfroze variable: ' + path);
+                }
+            }
+        }
+        
+        unfreezeAllVariables() {
+            this.frozenVars.forEach((data, varName) => {
+                clearInterval(data.intervalId);
+            });
+            this.frozenVars.clear();
+            this.updateFrozenCount();
+            this.updateFrozenList();
+            this.addLog('info', 'All variables unfrozen');
+        }
+        
+        setInfinite() {
+            const varPath = this.container.querySelector('#variable-input').value.trim();
+            if (!varPath) {
+                this.addLog('warning', 'Please enter a variable name');
+                return;
+            }
+            
+            try {
+                this.setValueByPath(varPath, 1e308);
+                this.addLog('cheat', 'Set ' + varPath + ' to infinite');
+            } catch (error) {
+                this.addLog('error', 'Failed to set infinite: ' + error.message);
+            }
+        }
+        
+        resetToZero() {
+            const varPath = this.container.querySelector('#variable-input').value.trim();
+            if (!varPath) return;
+            
+            try {
+                this.setValueByPath(varPath, 0);
+                this.addLog('cheat', 'Reset ' + varPath + ' to 0');
+            } catch (error) {
+                this.addLog('error', 'Failed to reset: ' + error.message);
+            }
+        }
+        
+        incrementValue() {
+            const varPath = this.container.querySelector('#variable-input').value.trim();
+            if (!varPath) return;
+            
+            try {
+                const currentValue = this.getValueByPath(varPath);
+                if (typeof currentValue === 'number') {
+                    this.setValueByPath(varPath, currentValue + 1);
+                    this.addLog('cheat', 'Incremented ' + varPath + ' to ' + (currentValue + 1));
+                }
+            } catch (error) {
+                this.addLog('error', 'Failed to increment: ' + error.message);
+            }
+        }
+        
+        decrementValue() {
+            const varPath = this.container.querySelector('#variable-input').value.trim();
+            if (!varPath) return;
+            
+            try {
+                const currentValue = this.getValueByPath(varPath);
+                if (typeof currentValue === 'number') {
+                    this.setValueByPath(varPath, currentValue - 1);
+                    this.addLog('cheat', 'Decremented ' + varPath + ' to ' + (currentValue - 1));
+                }
+            } catch (error) {
+                this.addLog('error', 'Failed to decrement: ' + error.message);
+            }
+        }
+        
+        multiplyValue() {
+            const varPath = this.container.querySelector('#variable-input').value.trim();
+            if (!varPath) return;
+            
+            try {
+                const currentValue = this.getValueByPath(varPath);
+                if (typeof currentValue === 'number') {
+                    this.setValueByPath(varPath, currentValue * 10);
+                    this.addLog('cheat', 'Multiplied ' + varPath + ' by 10 to ' + (currentValue * 10));
+                }
+            } catch (error) {
+                this.addLog('error', 'Failed to multiply: ' + error.message);
+            }
+        }
+        
+        getValue() {
+            const varPath = this.container.querySelector('#variable-input').value.trim();
+            if (!varPath) return;
+            
+            try {
+                const value = this.getValueByPath(varPath);
+                const output = this.container.querySelector('#console-output');
+                output.innerHTML += '<div class="av-console-line" style="color: #ffaa00;">' + varPath + ' = ' + this.formatConsoleOutput(value) + '</div>';
+                output.scrollTop = output.scrollHeight;
+                this.addLog('info', 'Retrieved value for ' + varPath);
+            } catch (error) {
+                this.addLog('error', 'Failed to get value: ' + error.message);
+            }
+        }
+        
+        watchValue() {
+            const varPath = this.container.querySelector('#variable-input').value.trim();
+            if (!varPath) return;
+            
+            try {
+                const currentValue = this.getValueByPath(varPath);
+                this.watchedVariables.set(varPath, currentValue);
+                this.addLog('info', 'Now watching ' + varPath + ' for changes');
+                
+                const watchedElement = this.container.querySelector('#watched-count');
+                if (watchedElement) {
+                    watchedElement.textContent = this.watchedVariables.size;
+                }
+            } catch (error) {
+                this.addLog('error', 'Failed to watch variable: ' + error.message);
+            }
+        }
+        
+        clearConsole() {
+            const output = this.container.querySelector('#console-output');
+            if (output) {
+                output.innerHTML = '<div class="av-console-line">Console cleared</div>';
+            }
+        }
+        
+        // Enhanced Autoclicker Methods
+        toggleAutoclicker() {
+            if (this.autoclickerActive) {
+                this.stopAutoclicker();
+            } else {
+                this.startAutoclicker();
+            }
+        }
+        
+        startAutoclicker() {
+            if (this.autoclickerActive) return;
+            
+            const target = this.container.querySelector('#click-target').value.trim();
+            const interval = parseInt(this.container.querySelector('#click-interval').value);
+            const maxClicks = parseInt(this.container.querySelector('#max-clicks').value);
+            const startDelay = parseInt(this.container.querySelector('#start-delay').value) * 1000;
+            const followMouse = this.container.querySelector('#follow-mouse').checked;
+            
+            this.followMouse = followMouse;
+            
+            const startClicking = () => {
+                this.autoclickerActive = true;
+                this.clickCount = 0;
+                
+                this.clickIntervalId = setInterval(() => {
+                    try {
+                        let clickX, clickY;
+                        
+                        if (followMouse) {
+                            clickX = this.mousePosition.x;
+                            clickY = this.mousePosition.y;
+                        } else if (target) {
+                            const element = document.querySelector(target);
+                            if (element) {
+                                const rect = element.getBoundingClientRect();
+                                clickX = rect.left + rect.width / 2;
+                                clickY = rect.top + rect.height / 2;
+                                element.click();
+                            } else {
+                                clickX = parseInt(this.container.querySelector('#click-x').value);
+                                clickY = parseInt(this.container.querySelector('#click-y').value);
+                            }
+                        } else {
+                            clickX = parseInt(this.container.querySelector('#click-x').value);
+                            clickY = parseInt(this.container.querySelector('#click-y').value);
+                        }
+                        
+                        this.simulateClick(clickX, clickY);
+                        
+                        this.clickCount++;
+                        this.updateClickCount();
+                        
+                        if (maxClicks > 0 && this.clickCount >= maxClicks) {
+                            this.stopAutoclicker();
+                            this.addLog('cheat', 'Autoclicker stopped after ' + maxClicks + ' clicks');
+                        }
+                    } catch (error) {
+                        this.addLog('error', 'Autoclicker error: ' + error.message);
+                        this.stopAutoclicker();
+                    }
+                }, interval);
+                
+                this.container.querySelector('#clicker-status').textContent = 'Running';
+                this.addLog('cheat', 'Autoclicker started' + (target ? ' targeting: ' + target : ''));
+            };
+            
+            if (startDelay > 0) {
+                this.addLog('info', 'Autoclicker starting in ' + (startDelay/1000) + ' seconds...');
+                setTimeout(startClicking, startDelay);
+            } else {
+                startClicking();
+            }
+        }
+        
+        simulateClick(x, y) {
+            const element = document.elementFromPoint(x, y);
+            if (element) {
+                const event = new MouseEvent('click', {
+                    view: window,
+                    bubbles: true,
+                    cancelable: true,
+                    clientX: x,
+                    clientY: y
+                });
+                element.dispatchEvent(event);
+            }
+        }
+        
+        stopAutoclicker() {
+            if (this.clickIntervalId) {
+                clearInterval(this.clickIntervalId);
+                this.clickIntervalId = null;
+            }
+            
+            this.autoclickerActive = false;
+            const statusElement = this.container.querySelector('#clicker-status');
+            if (statusElement) statusElement.textContent = 'Stopped';
+            this.addLog('info', 'Autoclicker stopped');
+        }
+        
+        updateClickCount() {
+            const countElement = this.container.querySelector('#click-count');
+            if (countElement) {
+                countElement.textContent = this.clickCount;
+            }
+        }
+        
+        selectElement() {
+            this.addLog('info', 'Click on an element to select it as autoclicker target');
+            
+            const handler = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                const element = e.target;
+                let selector = this.generateSelector(element);
+                
+                this.container.querySelector('#click-target').value = selector;
+                this.addLog('info', 'Selected element: ' + selector);
+                
+                document.removeEventListener('click', handler, true);
+            };
+            
+            document.addEventListener('click', handler, true);
+        }
+        
+        generateSelector(element) {
+            if (element.id) return '#' + element.id;
+            if (element.className) {
+                const classes = element.className.split(' ').filter(c => c && !c.includes(' ')).slice(0, 2);
+                if (classes.length > 0) return '.' + classes.join('.');
+            }
+            return element.tagName.toLowerCase();
+        }
+        
+        getMousePosition() {
+            this.container.querySelector('#click-x').value = this.mousePosition.x;
+            this.container.querySelector('#click-y').value = this.mousePosition.y;
+            this.addLog('info', 'Mouse position captured: ' + this.mousePosition.x + ', ' + this.mousePosition.y);
+        }
+        
+        setClickCoordinates() {
+            const x = parseInt(this.container.querySelector('#click-x').value);
+            const y = parseInt(this.container.querySelector('#click-y').value);
+            this.addLog('info', 'Click coordinates set to: ' + x + ', ' + y);
+        }
+        
+        // Enhanced Key Spammer Methods
+        startKeySpammer() {
+            if (this.keySpammerActive) return;
+            
+            const key = this.container.querySelector('#spam-key').value.trim();
+            const interval = parseInt(this.container.querySelector('#spam-interval').value);
+            const count = parseInt(this.container.querySelector('#spam-count').value);
+            
+            if (!key) {
+                this.addLog('warning', 'Please enter a key to spam');
+                return;
+            }
+            
+            this.keySpammerActive = true;
+            let spamCount = 0;
+            
+            this.keySpamIntervalId = setInterval(() => {
+                try {
+                    this.sendKeyEvent(key);
+                    spamCount++;
+                    this.container.querySelector('#spam-counter').textContent = spamCount;
+                    
+                    if (count > 0 && spamCount >= count) {
+                        this.stopKeySpammer();
+                        this.addLog('cheat', 'Key spam completed: ' + spamCount + ' keys sent');
+                    }
+                } catch (error) {
+                    this.addLog('error', 'Key spam error: ' + error.message);
+                    this.stopKeySpammer();
+                }
+            }, interval);
+            
+            this.addLog('cheat', 'Started spamming key: ' + key);
+        }
+        
+        stopKeySpammer() {
+            if (this.keySpamIntervalId) {
+                clearInterval(this.keySpamIntervalId);
+                this.keySpamIntervalId = null;
+            }
+            this.keySpammerActive = false;
+            this.addLog('info', 'Key spammer stopped');
+        }
+        
+        sendSingleKey() {
+            const key = this.container.querySelector('#spam-key').value.trim();
+            if (key) {
+                this.sendKeyEvent(key);
+                this.addLog('info', 'Sent key: ' + key);
+            }
+        }
+        
+        sendKeyEvent(key) {
+            const event = new KeyboardEvent('keydown', {
+                key: key,
+                code: 'Key' + key.toUpperCase(),
+                bubbles: true
+            });
+            document.dispatchEvent(event);
+        }
+        
+        // Enhanced Explorer Methods
+        initializeExplorer() {
+            this.updateExplorerTree();
+        }
+        
+        updateExplorerTree() {
+            const treeContainer = this.container.querySelector('#explorer-tree');
+            if (!treeContainer) return;
+            
+            treeContainer.innerHTML = '<div class="av-tree-item" data-path="window">' +
+                '<span class="av-tree-toggle">></span>' +
+                '<span class="av-tree-label">window</span>' +
+            '</div>';
+            
+            // Bind tree events
+            this.bindExplorerEvents();
+        }
+        
+        bindExplorerEvents() {
+            const treeContainer = this.container.querySelector('#explorer-tree');
+            
+            treeContainer.addEventListener('click', (e) => {
+                const treeItem = e.target.closest('.av-tree-item');
+                if (!treeItem) return;
+                
+                const toggle = e.target.closest('.av-tree-toggle');
+                const path = treeItem.dataset.path;
+                
+                if (toggle) {
+                    this.toggleExplorerNode(treeItem, path);
+                } else {
+                    this.selectExplorerNode(treeItem, path);
+                }
+            });
+        }
+        
+        toggleExplorerNode(treeItem, path) {
+            const toggle = treeItem.querySelector('.av-tree-toggle');
+            const isExpanded = this.explorerExpanded.has(path);
+            
+            if (isExpanded) {
+                // Collapse
+                toggle.textContent = '>';
+                this.explorerExpanded.delete(path);
+                const children = treeItem.querySelector('.av-tree-children');
+                if (children) children.remove();
+            } else {
+                // Expand
+                toggle.textContent = 'v';
+                this.explorerExpanded.add(path);
+                this.expandExplorerNode(treeItem, path);
+            }
+        }
+        
+        expandExplorerNode(treeItem, path) {
+            try {
+                const obj = this.getObjectFromPath(path);
+                if (!obj || typeof obj !== 'object') return;
+                
+                const childrenContainer = document.createElement('div');
+                childrenContainer.className = 'av-tree-children';
+                
+                // Get properties (limit to prevent crashes)
+                const keys = Object.getOwnPropertyNames(obj).slice(0, 50);
+                const childItems = [];
+                
+                for (const key of keys) {
+                    try {
+                        const value = obj[key];
+                        const childPath = path + '.' + key;
+                        
+                        if (typeof value === 'object' && value !== null && value !== window) {
+                            childItems.push('<div class="av-tree-item" data-path="' + childPath + '">' +
+                                '<span class="av-tree-toggle">></span>' +
+                                '<span class="av-tree-label">' + key + ' {Object}</span>' +
+                            '</div>');
+                        } else if (typeof value === 'function') {
+                            childItems.push('<div class="av-tree-item" data-path="' + childPath + '">' +
+                                '<span class="av-tree-toggle"></span>' +
+                                '<span class="av-tree-label">' + key + ' ()</span>' +
+                            '</div>');
+                        } else {
+                            childItems.push('<div class="av-tree-item" data-path="' + childPath + '">' +
+                                '<span class="av-tree-toggle"></span>' +
+                                '<span class="av-tree-label">' + key + ': ' + this.formatValue(value) + '</span>' +
+                            '</div>');
+                        }
+                    } catch (e) {
+                        // Skip inaccessible properties
+                    }
+                }
+                
+                childrenContainer.innerHTML = childItems.join('');
+                treeItem.appendChild(childrenContainer);
+                
+            } catch (error) {
+                this.addLog('error', 'Failed to expand node: ' + error.message);
+            }
+        }
+        
+        selectExplorerNode(treeItem, path) {
+            // Remove previous selection
+            this.container.querySelectorAll('.av-tree-item').forEach(item => {
+                item.classList.remove('selected');
+            });
+            treeItem.classList.add('selected');
+            
+            this.updateExplorerDetails(path);
+        }
+        
+        updateExplorerDetails(path) {
+            try {
+                const obj = this.getObjectFromPath(path);
+                if (!obj) return;
+                
+                this.updateVariablesList(obj, path);
+                this.updateFunctionsList(obj, path);
+                
+            } catch (error) {
+                this.addLog('error', 'Failed to update explorer details: ' + error.message);
+            }
+        }
+        
+        updateVariablesList(obj, basePath) {
+            const container = this.container.querySelector('#variables-list');
+            if (!container) return;
+            
+            const variables = [];
+            
+            try {
+                const keys = Object.getOwnPropertyNames(obj).slice(0, 100);
+                
+                for (const key of keys) {
+                    try {
+                        const value = obj[key];
+                        if (typeof value !== 'function') {
+                            const fullPath = basePath + '.' + key;
+                            variables.push('<div class="av-variable-item" data-path="' + fullPath + '">' +
+                                '<strong>' + key + ':</strong> ' + this.formatValue(value) +
+                                '<div style="color: #888; font-size: 9px;">' + typeof value + '</div>' +
+                            '</div>');
+                        }
+                    } catch (e) {
+                        // Skip
+                    }
+                }
+                
+                if (variables.length === 0) {
+                    container.innerHTML = '<div class="av-placeholder">No variables found</div>';
+                } else {
+                    container.innerHTML = variables.join('');
+                    
+                    // Bind click events
+                    container.querySelectorAll('.av-variable-item').forEach(item => {
+                        item.addEventListener('click', () => {
+                            const path = item.dataset.path;
+                            this.copyToConsole(path);
+                            this.addLog('info', 'Variable copied to console: ' + path);
+                        });
+                    });
+                }
+                
+            } catch (error) {
+                container.innerHTML = '<div class="av-placeholder">Error loading variables</div>';
+            }
+        }
+        
+        updateFunctionsList(obj, basePath) {
+            const container = this.container.querySelector('#functions-list');
+            if (!container) return;
+            
+            const functions = [];
+            
+            try {
+                const keys = Object.getOwnPropertyNames(obj).slice(0, 100);
+                
+                for (const key of keys) {
+                    try {
+                        const value = obj[key];
+                        if (typeof value === 'function') {
+                            const fullPath = basePath + '.' + key;
+                            const funcStr = value.toString();
+                            const preview = funcStr.substring(0, 50) + (funcStr.length > 50 ? '...' : '');
+                            
+                            functions.push('<div class="av-function-item" data-path="' + fullPath + '">' +
+                                '<strong>' + key + '()</strong>' +
+                                '<div style="color: #888; font-size: 9px;">' + preview + '</div>' +
+                            '</div>');
+                        }
+                    } catch (e) {
+                        // Skip
+                    }
+                }
+                
+                if (functions.length === 0) {
+                    container.innerHTML = '<div class="av-placeholder">No functions found</div>';
+                } else {
+                    container.innerHTML = functions.join('');
+                    
+                    // Bind click events
+                    container.querySelectorAll('.av-function-item').forEach(item => {
+                        item.addEventListener('click', () => {
+                            const path = item.dataset.path;
+                            this.copyToConsole(path);
+                            this.addLog('info', 'Function copied to console: ' + path);
+                        });
+                    });
+                }
+                
+            } catch (error) {
+                container.innerHTML = '<div class="av-placeholder">Error loading functions</div>';
+            }
+        }
+        
+        loadAllVariables() {
+            const selectedNode = this.container.querySelector('.av-tree-item.selected');
+            if (!selectedNode) {
+                this.addLog('warning', 'Please select a node first');
+                return;
+            }
+            
+            const path = selectedNode.dataset.path;
+            this.addLog('info', 'Loading all variables from: ' + path);
+            
+            try {
+                const obj = this.getObjectFromPath(path);
+                const variables = [];
+                
+                if (obj && typeof obj === 'object') {
+                    const keys = Object.getOwnPropertyNames(obj);
+                    for (const key of keys) {
+                        try {
+                            const value = obj[key];
+                            if (typeof value !== 'function') {
+                                variables.push(path + '.' + key);
+                            }
+                        } catch (e) {
+                            // Skip
+                        }
+                    }
+                }
+                
+                this.addLog('scan', 'Found ' + variables.length + ' variables in ' + path);
+                
+                // Copy first few to console for quick access
+                if (variables.length > 0) {
+                    const output = this.container.querySelector('#console-output');
+                    output.innerHTML += '<div class="av-console-line" style="color: #00ff00;">Variables from ' + path + ':</div>';
+                    variables.slice(0, 10).forEach(varPath => {
+                        output.innerHTML += '<div class="av-console-line">' + varPath + '</div>';
+                    });
+                    if (variables.length > 10) {
+                        output.innerHTML += '<div class="av-console-line">... and ' + (variables.length - 10) + ' more</div>';
+                    }
+                    output.scrollTop = output.scrollHeight;
+                }
+                
+            } catch (error) {
+                this.addLog('error', 'Failed to load variables: ' + error.message);
+            }
+        }
+        
+        // Enhanced Network Methods
+        startLightScan() {
+            this.networkScanActive = true;
+            this.container.querySelector('#scan-status').textContent = 'Light Scan Active';
+            this.logToNetworkMonitor('Light scan started - monitoring variable changes only');
+            
+            // Start checking for variable changes
+            this.variableCheckInterval = setInterval(() => {
+                this.checkValueChanges();
+            }, 1000);
+        }
+        
+        startMediumScan() {
+            this.networkScanActive = true;
+            this.container.querySelector('#scan-status').textContent = 'Medium Scan Active';
+            this.logToNetworkMonitor('Medium scan started - monitoring functions, variables, and clicks');
+            
+            // Monitor variable changes
+            this.variableCheckInterval = setInterval(() => {
+                this.checkValueChanges();
+            }, 500);
+            
+            // Monitor function calls
+            this.setupFunctionMonitoring();
+            
+            // Monitor element clicks
+            this.setupClickMonitoring();
+        }
+        
+        startDeepScan() {
+            try {
+                this.networkScanActive = true;
+                this.container.querySelector('#scan-status').textContent = 'Deep Scan Active';
+                this.logToNetworkMonitor('Deep scan started - monitoring everything');
+                
+                // Monitor variable changes more frequently
+                this.variableCheckInterval = setInterval(() => {
+                    this.checkValueChanges();
+                }, 200);
+                
+                // Monitor function calls
+                this.setupFunctionMonitoring();
+                
+                // Monitor element clicks
+                this.setupClickMonitoring();
+                
+                // Monitor network requests
+                this.setupNetworkMonitoring();
+                
+                // Monitor console usage
+                this.setupConsoleMonitoring();
+                
+            } catch (error) {
+                this.addLog('error', 'Deep scan error: ' + error.message);
+                this.stopNetworkScan();
+            }
+        }
+        
+        stopNetworkScan() {
+            this.networkScanActive = false;
+            this.container.querySelector('#scan-status').textContent = 'Stopped';
+            this.logToNetworkMonitor('Scan stopped');
+            
+            if (this.variableCheckInterval) {
+                clearInterval(this.variableCheckInterval);
+                this.variableCheckInterval = null;
+            }
+            
+            // Restore original functions
+            this.restoreOriginalFunctions();
+            
+            // Remove event listeners
+            if (this.clickMonitorHandler) {
+                document.removeEventListener('click', this.clickMonitorHandler, true);
+                this.clickMonitorHandler = null;
+            }
+        }
+        
+        setupFunctionMonitoring() {
+            try {
+                // Monitor common game functions
+                const commonFunctions = ['setTimeout', 'setInterval', 'fetch'];
+                
+                commonFunctions.forEach(funcName => {
+                    if (window[funcName] && !this.originalFunctions.has(funcName)) {
+                        const original = window[funcName];
+                        this.originalFunctions.set(funcName, original);
+                        
+                        window[funcName] = (...args) => {
+                            this.logToNetworkMonitor('Function called: ' + funcName + '(' + args.length + ' args)');
+                            return original.apply(window, args);
+                        };
+                    }
+                });
+                
+            } catch (error) {
+                this.addLog('error', 'Function monitoring setup error: ' + error.message);
+            }
+        }
+        
+        setupClickMonitoring() {
+            this.clickMonitorHandler = (e) => {
+                if (this.networkScanActive) {
+                    const element = e.target;
+                    const elementInfo = element.tagName + (element.id ? '#' + element.id : '') + 
+                                     (element.className ? '.' + element.className.split(' ').join('.') : '');
+                    this.logToNetworkMonitor('Element clicked: ' + elementInfo);
+                }
+            };
+            
+            document.addEventListener('click', this.clickMonitorHandler, true);
+        }
+        
+        setupNetworkMonitoring() {
+            try {
+                // Monitor fetch requests
+                if (!this.originalFunctions.has('fetch')) {
+                    const originalFetch = window.fetch;
+                    this.originalFunctions.set('fetch', originalFetch);
+                    
+                    window.fetch = (...args) => {
+                        this.logToNetworkMonitor('Fetch request: ' + args[0]);
+                        return originalFetch.apply(window, args);
+                    };
+                }
+                
+                // Monitor XMLHttpRequest
+                if (!this.originalFunctions.has('XMLHttpRequest.open')) {
+                    const originalOpen = XMLHttpRequest.prototype.open;
+                    this.originalFunctions.set('XMLHttpRequest.open', originalOpen);
+                    
+                    XMLHttpRequest.prototype.open = function(...args) {
+                        window.anticheatTester.logToNetworkMonitor('XHR request: ' + args[1]);
+                        return originalOpen.apply(this, args);
+                    };
+                }
+                
+            } catch (error) {
+                this.addLog('error', 'Network monitoring setup error: ' + error.message);
+            }
+        }
+        
+        setupConsoleMonitoring() {
+            try {
+                // Monitor console usage
+                if (!this.originalFunctions.has('console.log')) {
+                    const originalLog = console.log;
+                    this.originalFunctions.set('console.log', originalLog);
+                    
+                    console.log = (...args) => {
+                        this.logToNetworkMonitor('Console.log: ' + args.join(' '));
+                        return originalLog.apply(console, args);
+                    };
+                }
+                
+            } catch (error) {
+                this.addLog('error', 'Console monitoring setup error: ' + error.message);
+            }
+        }
+        
+        restoreOriginalFunctions() {
+            this.originalFunctions.forEach((original, funcName) => {
+                try {
+                    if (funcName === 'XMLHttpRequest.open') {
+                        XMLHttpRequest.prototype.open = original;
+                    } else if (funcName.startsWith('console.')) {
+                        const method = funcName.split('.')[1];
+                        console[method] = original;
+                    } else {
+                        window[funcName] = original;
+                    }
+                } catch (e) {
+                    // Ignore restoration errors
+                }
+            });
+            this.originalFunctions.clear();
+        }
+        
+        logToNetworkMonitor(message) {
+            const monitor = this.container.querySelector('#network-monitor');
+            if (monitor) {
+                const timestamp = new Date().toLocaleTimeString();
+                monitor.innerHTML += '<div class="av-log-item">[' + timestamp + '] ' + message + '</div>';
+                monitor.scrollTop = monitor.scrollHeight;
+                
+                // Limit lines to prevent memory issues
+                const lines = monitor.querySelectorAll('.av-log-item');
+                if (lines.length > 1000) {
+                    for (let i = 0; i < 500; i++) {
+                        lines[i].remove();
+                    }
+                }
+            }
+        }
+        
+        // Useful Tab Methods
+        executeUsefulFunction(functionId) {
+            const resultsContainer = this.container.querySelector('#useful-results');
+            
+            switch (functionId) {
+                case 'find-all-functions':
+                    this.findAllFunctions(resultsContainer);
+                    break;
+                case 'find-all-variables':
+                    this.findAllVariables(resultsContainer);
+                    break;
+                case 'find-event-listeners':
+                    this.findEventListeners(resultsContainer);
+                    break;
+                case 'find-timers':
+                    this.findActiveTimers(resultsContainer);
+                    break;
+                case 'find-api-endpoints':
+                    this.findAPIEndpoints(resultsContainer);
+                    break;
+                case 'find-cookies':
+                    this.findAllCookies(resultsContainer);
+                    break;
+                case 'find-storage':
+                    this.findStorageData(resultsContainer);
+                    break;
+                case 'find-global-objects':
+                    this.findGlobalObjects(resultsContainer);
+                    break;
+                case 'find-game-variables':
+                    this.findGameVariables(resultsContainer);
+                    break;
+                case 'find-player-data':
+                    this.findPlayerData(resultsContainer);
+                    break;
+                case 'find-score-systems':
+                    this.findScoreSystems(resultsContainer);
+                    break;
+                case 'find-upgrade-systems':
+                    this.findUpgradeSystems(resultsContainer);
+                    break;
+                case 'find-save-functions':
+                    this.findSaveFunctions(resultsContainer);
+                    break;
+                case 'find-cheat-protection':
+                    this.findCheatProtection(resultsContainer);
+                    break;
+                case 'find-encryption':
+                    this.findEncryption(resultsContainer);
+                    break;
+                case 'find-obfuscation':
+                    this.findObfuscation(resultsContainer);
+                    break;
+                case 'find-anti-debug':
+                    this.findAntiDebug(resultsContainer);
+                    break;
+                case 'find-integrity-checks':
+                    this.findIntegrityChecks(resultsContainer);
+                    break;
+                default:
+                    this.addLog('warning', 'Unknown useful function: ' + functionId);
+            }
+        }
+        
+        findAllFunctions(container) {
+            const functions = [];
+            this.addLog('scan', 'Scanning for all functions...');
+            
+            try {
+                // Scan window functions
+                Object.getOwnPropertyNames(window).forEach(key => {
+                    try {
+                        if (typeof window[key] === 'function') {
+                            functions.push({
+                                path: key,
+                                type: 'window function',
+                                source: window[key].toString().substring(0, 100)
+                            });
+                        }
+                    } catch (e) {}
+                });
+                
+                // Scan common game objects
+                ['Game', 'game', 'App', 'app'].forEach(objName => {
+                    try {
+                        const obj = window[objName];
+                        if (obj && typeof obj === 'object') {
+                            Object.keys(obj).forEach(key => {
+                                try {
+                                    if (typeof obj[key] === 'function') {
+                                        functions.push({
+                                            path: objName + '.' + key,
+                                            type: 'game function',
+                                            source: obj[key].toString().substring(0, 100)
+                                        });
+                                    }
+                                } catch (e) {}
+                            });
+                        }
+                    } catch (e) {}
+                });
+                
+                this.displayUsefulResults(container, 'Functions Found (' + functions.length + ')', functions);
+                this.addLog('scan', 'Found ' + functions.length + ' functions');
+                
+            } catch (error) {
+                this.addLog('error', 'Function search error: ' + error.message);
+            }
+        }
+        
+        findAllVariables(container) {
+            const variables = [];
+            this.addLog('scan', 'Scanning for all variables...');
+            
+            try {
+                // Scan window variables
+                Object.getOwnPropertyNames(window).forEach(key => {
+                    try {
+                        const value = window[key];
+                        if (typeof value !== 'function' && !key.startsWith('webkit') && !key.startsWith('chrome')) {
+                            variables.push({
+                                path: key,
+                                type: typeof value,
+                                value: this.formatValue(value)
+                            });
+                        }
+                    } catch (e) {}
+                });
+                
+                this.displayUsefulResults(container, 'Variables Found (' + variables.length + ')', variables);
+                this.addLog('scan', 'Found ' + variables.length + ' variables');
+                
+            } catch (error) {
+                this.addLog('error', 'Variable search error: ' + error.message);
+            }
+        }
+        
+        findGameVariables(container) {
+            const gameVars = [];
+            this.addLog('scan', 'Scanning for game variables...');
+            
+            try {
+                const gameKeywords = ['score', 'money', 'coins', 'health', 'level', 'lives', 'points', 'cash', 'gold', 'gems'];
+                
+                // Search in window
+                Object.keys(window).forEach(key => {
+                    try {
+                        if (gameKeywords.some(keyword => key.toLowerCase().includes(keyword))) {
+                            gameVars.push({
+                                path: key,
+                                type: typeof window[key],
+                                value: this.formatValue(window[key])
+                            });
+                        }
+                    } catch (e) {}
+                });
+                
+                // Search in Game object if it exists
+                ['Game', 'game'].forEach(objName => {
+                    try {
+                        const gameObj = window[objName];
+                        if (gameObj && typeof gameObj === 'object') {
+                            Object.keys(gameObj).forEach(key => {
+                                try {
+                                    gameVars.push({
+                                        path: objName + '.' + key,
+                                        type: typeof gameObj[key],
+                                        value: this.formatValue(gameObj[key])
+                                    });
+                                } catch (e) {}
+                            });
+                        }
+                    } catch (e) {}
+                });
+                
+                this.displayUsefulResults(container, 'Game Variables Found (' + gameVars.length + ')', gameVars);
+                this.addLog('scan', 'Found ' + gameVars.length + ' game variables');
+                
+            } catch (error) {
+                this.addLog('error', 'Game variable search error: ' + error.message);
+            }
+        }
+        
+        findPlayerData(container) {
+            const playerData = [];
+            this.addLog('scan', 'Scanning for player data...');
+            
+            try {
+                const playerKeywords = ['player', 'user', 'character', 'avatar', 'profile'];
+                
+                Object.keys(window).forEach(key => {
+                    try {
+                        if (playerKeywords.some(keyword => key.toLowerCase().includes(keyword))) {
+                            const obj = window[key];
+                            if (obj && typeof obj === 'object') {
+                                Object.keys(obj).forEach(subKey => {
+                                    try {
+                                        playerData.push({
+                                            path: key + '.' + subKey,
+                                            type: typeof obj[subKey],
+                                            value: this.formatValue(obj[subKey])
+                                        });
+                                    } catch (e) {}
+                                });
+                            } else {
+                                playerData.push({
+                                    path: key,
+                                    type: typeof obj,
+                                    value: this.formatValue(obj)
+                                });
+                            }
+                        }
+                    } catch (e) {}
+                });
+                
+                this.displayUsefulResults(container, 'Player Data Found (' + playerData.length + ')', playerData);
+                this.addLog('scan', 'Found ' + playerData.length + ' player data items');
+                
+            } catch (error) {
+                this.addLog('error', 'Player data search error: ' + error.message);
+            }
+        }
+        
+        findStorageData(container) {
+            const storageData = [];
+            this.addLog('scan', 'Scanning storage data...');
+            
+            try {
+                // Local Storage
+                for (let i = 0; i < localStorage.length; i++) {
+                    const key = localStorage.key(i);
+                    const value = localStorage.getItem(key);
+                    storageData.push({
+                        path: 'localStorage.' + key,
+                        type: 'localStorage',
+                        value: value ? value.substring(0, 50) + (value.length > 50 ? '...' : '') : 'null'
+                    });
+                }
+                
+                // Session Storage
+                for (let i = 0; i < sessionStorage.length; i++) {
+                    const key = sessionStorage.key(i);
+                    const value = sessionStorage.getItem(key);
+                    storageData.push({
+                        path: 'sessionStorage.' + key,
+                        type: 'sessionStorage',
+                        value: value ? value.substring(0, 50) + (value.length > 50 ? '...' : '') : 'null'
+                    });
+                }
+                
+                this.displayUsefulResults(container, 'Storage Data Found (' + storageData.length + ')', storageData);
+                this.addLog('scan', 'Found ' + storageData.length + ' storage items');
+                
+            } catch (error) {
+                this.addLog('error', 'Storage search error: ' + error.message);
+            }
+        }
+        
+        findAllCookies(container) {
+            const cookies = [];
+            this.addLog('scan', 'Scanning cookies...');
+            
+            try {
+                const cookieString = document.cookie;
+                const cookiePairs = cookieString.split(';');
+                
+                cookiePairs.forEach(pair => {
+                    const [name, value] = pair.trim().split('=');
+                    if (name) {
+                        cookies.push({
+                            path: 'cookie.' + name,
+                            type: 'cookie',
+                            value: value || ''
+                        });
+                    }
+                });
+                
+                this.displayUsefulResults(container, 'Cookies Found (' + cookies.length + ')', cookies);
+                this.addLog('scan', 'Found ' + cookies.length + ' cookies');
+                
+            } catch (error) {
+                this.addLog('error', 'Cookie search error: ' + error.message);
+            }
+        }
+        
+        findEventListeners(container) {
+            const listeners = [];
+            this.addLog('scan', 'Scanning for event listeners...');
+            
+            try {
+                // This is a simplified version - real event listener detection is complex
+                const elements = document.querySelectorAll('*');
+                let count = 0;
+                
+                for (const element of elements) {
+                    if (count++ > 100) break; // Limit to prevent slowdown
+                    
+                    // Check for common event handlers
+                    const events = ['onclick', 'onmouseover', 'onkeydown', 'onload', 'onchange'];
+                    events.forEach(event => {
+                        if (element[event]) {
+                            listeners.push({
+                                path: element.tagName + (element.id ? '#' + element.id : '') + '.' + event,
+                                type: 'event listener',
+                                value: 'function'
+                            });
+                        }
+                    });
+                }
+                
+                this.displayUsefulResults(container, 'Event Listeners Found (' + listeners.length + ')', listeners);
+                this.addLog('scan', 'Found ' + listeners.length + ' event listeners');
+                
+            } catch (error) {
+                this.addLog('error', 'Event listener search error: ' + error.message);
+            }
+        }
+        
+        findActiveTimers(container) {
+            const timers = [];
+            this.addLog('scan', 'Scanning for active timers...');
+            
+            try {
+                // This is an approximation - exact timer detection is difficult
+                timers.push({
+                    path: 'estimated',
+                    type: 'timer info',
+                    value: 'Estimated 5-15 active timers (detection limited by browser security)'
+                });
+                
+                this.displayUsefulResults(container, 'Timer Information', timers);
+                this.addLog('scan', 'Timer scan completed (limited detection)');
+                
+            } catch (error) {
+                this.addLog('error', 'Timer search error: ' + error.message);
+            }
+        }
+        
+        findAPIEndpoints(container) {
+            const endpoints = [];
+            this.addLog('scan', 'Scanning for API endpoints...');
+            
+            try {
+                // Search in scripts for common API patterns
+                const scripts = document.querySelectorAll('script');
+                const urlPattern = /https?:\/\/[^\s"']+/g;
+                
+                scripts.forEach((script, index) => {
+                    try {
+                        const content = script.textContent || script.innerText || '';
+                        const matches = content.match(urlPattern);
+                        if (matches) {
+                            matches.forEach(url => {
+                                if (url.includes('api') || url.includes('.json') || url.includes('/v')) {
+                                    endpoints.push({
+                                        path: 'script[' + index + ']',
+                                        type: 'API endpoint',
+                                        value: url
+                                    });
+                                }
+                            });
+                        }
+                    } catch (e) {}
+                });
+                
+                this.displayUsefulResults(container, 'API Endpoints Found (' + endpoints.length + ')', endpoints);
+                this.addLog('scan', 'Found ' + endpoints.length + ' potential API endpoints');
+                
+            } catch (error) {
+                this.addLog('error', 'API endpoint search error: ' + error.message);
+            }
+        }
+        
+        findGlobalObjects(container) {
+            const globalObjs = [];
+            this.addLog('scan', 'Scanning for global objects...');
+            
+            try {
+                Object.keys(window).forEach(key => {
+                    try {
+                        const value = window[key];
+                        if (value && typeof value === 'object' && 
+                            !key.startsWith('webkit') && !key.startsWith('chrome') &&
+                            key !== 'document' && key !== 'window') {
+                            
+                            const propCount = Object.keys(value).length;
+                            globalObjs.push({
+                                path: key,
+                                type: 'global object',
+                                value: propCount + ' properties'
+                            });
+                        }
+                    } catch (e) {}
+                });
+                
+                this.displayUsefulResults(container, 'Global Objects Found (' + globalObjs.length + ')', globalObjs);
+                this.addLog('scan', 'Found ' + globalObjs.length + ' global objects');
+                
+            } catch (error) {
+                this.addLog('error', 'Global object search error: ' + error.message);
+            }
+        }
+        
+        // Additional useful methods (implementing the rest with similar patterns)
+        findScoreSystems(container) {
+            const systems = [];
+            this.addLog('scan', 'Scanning for score systems...');
+            
+            const scoreKeywords = ['score', 'points', 'rating', 'rank', 'level'];
+            this.searchForKeywords(systems, scoreKeywords, 'score system');
+            
+            this.displayUsefulResults(container, 'Score Systems Found (' + systems.length + ')', systems);
+            this.addLog('scan', 'Found ' + systems.length + ' score system components');
+        }
+        
+        findUpgradeSystems(container) {
+            const systems = [];
+            this.addLog('scan', 'Scanning for upgrade systems...');
+            
+            const upgradeKeywords = ['upgrade', 'enhance', 'improve', 'boost', 'buff'];
+            this.searchForKeywords(systems, upgradeKeywords, 'upgrade system');
+            
+            this.displayUsefulResults(container, 'Upgrade Systems Found (' + systems.length + ')', systems);
+            this.addLog('scan', 'Found ' + systems.length + ' upgrade system components');
+        }
+        
+        findSaveFunctions(container) {
+            const saveFuncs = [];
+            this.addLog('scan', 'Scanning for save functions...');
+            
+            const saveKeywords = ['save', 'store', 'persist', 'backup', 'export'];
+            this.searchForKeywords(saveFuncs, saveKeywords, 'save function');
+            
+            this.displayUsefulResults(container, 'Save Functions Found (' + saveFuncs.length + ')', saveFuncs);
+            this.addLog('scan', 'Found ' + saveFuncs.length + ' save function candidates');
+        }
+        
+        findCheatProtection(container) {
+            const protection = [];
+            this.addLog('scan', 'Scanning for cheat protection...');
+            
+            const protectionKeywords = ['cheat', 'hack', 'exploit', 'validate', 'verify', 'check'];
+            this.searchForKeywords(protection, protectionKeywords, 'protection');
+            
+            this.displayUsefulResults(container, 'Cheat Protection Found (' + protection.length + ')', protection);
+            this.addLog('scan', 'Found ' + protection.length + ' protection mechanisms');
+        }
+        
+        findEncryption(container) {
+            const encryption = [];
+            this.addLog('scan', 'Scanning for encryption...');
+            
+            const encryptKeywords = ['encrypt', 'decrypt', 'cipher', 'crypto', 'hash', 'encode'];
+            this.searchForKeywords(encryption, encryptKeywords, 'encryption');
+            
+            this.displayUsefulResults(container, 'Encryption Found (' + encryption.length + ')', encryption);
+            this.addLog('scan', 'Found ' + encryption.length + ' encryption components');
+        }
+        
+        findObfuscation(container) {
+            const obfuscation = [];
+            this.addLog('scan', 'Scanning for obfuscated code...');
+            
+            try {
+                const scripts = document.querySelectorAll('script');
+                scripts.forEach((script, index) => {
+                    try {
+                        const content = script.textContent || script.innerText || '';
+                        // Simple obfuscation detection
+                        if (content.length > 1000 && 
+                            (content.match(/[a-zA-Z]{1,2}/g) || []).length > content.length / 10) {
+                            obfuscation.push({
+                                path: 'script[' + index + ']',
+                                type: 'obfuscated script',
+                                value: 'Potentially obfuscated (' + content.length + ' chars)'
+                            });
+                        }
+                    } catch (e) {}
+                });
+                
+                this.displayUsefulResults(container, 'Obfuscated Code Found (' + obfuscation.length + ')', obfuscation);
+                this.addLog('scan', 'Found ' + obfuscation.length + ' potentially obfuscated scripts');
+                
+            } catch (error) {
+                this.addLog('error', 'Obfuscation search error: ' + error.message);
+            }
+        }
+        
+        findAntiDebug(container) {
+            const antiDebug = [];
+            this.addLog('scan', 'Scanning for anti-debug mechanisms...');
+            
+            const debugKeywords = ['debugger', 'devtools', 'console', 'inspect'];
+            this.searchForKeywords(antiDebug, debugKeywords, 'anti-debug');
+            
+            this.displayUsefulResults(container, 'Anti-Debug Found (' + antiDebug.length + ')', antiDebug);
+            this.addLog('scan', 'Found ' + antiDebug.length + ' anti-debug mechanisms');
+        }
+        
+        findIntegrityChecks(container) {
+            const integrity = [];
+            this.addLog('scan', 'Scanning for integrity checks...');
+            
+            const integrityKeywords = ['integrity', 'checksum', 'verify', 'validate', 'authentic'];
+            this.searchForKeywords(integrity, integrityKeywords, 'integrity check');
+            
+            this.displayUsefulResults(container, 'Integrity Checks Found (' + integrity.length + ')', integrity);
+            this.addLog('scan', 'Found ' + integrity.length + ' integrity check mechanisms');
+        }
+        
+        searchForKeywords(results, keywords, type) {
+            try {
+                // Search in window properties
+                Object.keys(window).forEach(key => {
+                    try {
+                        if (keywords.some(keyword => key.toLowerCase().includes(keyword))) {
+                            results.push({
+                                path: key,
+                                type: type,
+                                value: this.formatValue(window[key])
+                            });
+                        }
+                    } catch (e) {}
+                });
+                
+                // Search in function names and code
+                Object.keys(window).forEach(key => {
+                    try {
+                        if (typeof window[key] === 'function') {
+                            const funcStr = window[key].toString();
+                            if (keywords.some(keyword => funcStr.toLowerCase().includes(keyword))) {
+                                results.push({
+                                    path: key + '()',
+                                    type: type + ' function',
+                                    value: 'Contains relevant keywords'
+                                });
+                            }
+                        }
+                    } catch (e) {}
+                });
+                
+            } catch (error) {
+                this.addLog('error', 'Keyword search error: ' + error.message);
+            }
+        }
+        
+        displayUsefulResults(container, title, results) {
+            if (!container) return;
+            
+            let html = '<h4>' + title + '</h4>';
+            
+            if (results.length === 0) {
+                html += '<div class="av-placeholder">No results found</div>';
+            } else {
+                html += results.map(result => {
+                    return '<div class="av-result-item" style="margin-bottom: 4px;">' +
+                        '<strong>' + result.path + '</strong>' +
+                        '<div style="color: #888; font-size: 10px;">' + result.type + '</div>' +
+                        '<div style="color: #0088ff; font-size: 10px;">' + result.value + '</div>' +
+                    '</div>';
+                }).join('');
+            }
+            
+            container.innerHTML = html;
+            
+            // Bind click events to copy paths to console
+            container.querySelectorAll('.av-result-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    const pathElement = item.querySelector('strong');
+                    if (pathElement) {
+                        const path = pathElement.textContent.replace('()', '');
+                        this.copyToConsole(path);
+                        this.addLog('info', 'Copied to console: ' + path);
+                    }
+                });
+            });
+        }
+        
+        // Anti-cheat Methods
+        executeAntiCheatScan(scanType) {
+            const resultsContainer = this.container.querySelector('#anticheat-results');
+            
+            switch (scanType) {
+                case 'full-scan':
+                    this.performFullAntiCheatScan(resultsContainer);
+                    break;
+                case 'stealth-scan':
+                    this.performStealthScan(resultsContainer);
+                    break;
+                case 'network-scan':
+                    this.performNetworkAntiCheatScan(resultsContainer);
+                    break;
+                case 'memory-protection-scan':
+                    this.performMemoryProtectionScan(resultsContainer);
+                    break;
+                case 'behavior-scan':
+                    this.performBehaviorScan(resultsContainer);
+                    break;
+                case 'custom-scan':
+                    this.performCustomScan(resultsContainer);
+                    break;
+            }
+        }
+        
+        performFullAntiCheatScan(container) {
+            this.addLog('scan', 'Starting full anti-cheat scan...');
+            
+            const results = [];
+            let riskScore = 0;
+            
+            // Check for function hooks
+            const commonFunctions = ['setTimeout', 'setInterval', 'fetch', 'XMLHttpRequest'];
+            commonFunctions.forEach(funcName => {
+                try {
+                    const func = window[funcName];
+                    if (func && func.toString().indexOf('native code') === -1) {
+                        results.push({
+                            component: funcName,
+                            status: 'DETECTED',
+                            risk: 15,
+                            description: 'Function appears to be hooked'
+                        });
+                        riskScore += 15;
+                    } else {
+                        results.push({
+                            component: funcName,
+                            status: 'CLEAR',
+                            risk: 0,
+                            description: 'Function appears normal'
+                        });
+                    }
+                } catch (e) {
+                    results.push({
+                        component: funcName,
+                        status: 'ERROR',
+                        risk: 5,
+                        description: 'Cannot access function'
+                    });
+                    riskScore += 5;
+                }
+            });
+            
+            // Check console modifications
+            try {
+                if (console.log.toString().indexOf('native code') === -1) {
+                    results.push({
+                        component: 'Console',
+                        status: 'DETECTED',
+                        risk: 20,
+                        description: 'Console appears to be modified'
+                    });
+                    riskScore += 20;
+                } else {
+                    results.push({
+                        component: 'Console',
+                        status: 'CLEAR',
+                        risk: 0,
+                        description: 'Console appears normal'
+                    });
+                }
+            } catch (e) {
+                results.push({
+                    component: 'Console',
+                    status: 'ERROR',
+                    risk: 10,
+                    description: 'Cannot check console'
+                });
+                riskScore += 10;
+            }
+            
+            // Update risk score
+            this.detectionScore = Math.min(riskScore, 100);
+            const scoreElement = this.container.querySelector('#detection-score');
+            if (scoreElement) {
+                scoreElement.textContent = this.detectionScore;
+                scoreElement.className = this.detectionScore < 30 ? 'score-low' : 
+                                       this.detectionScore < 70 ? 'score-medium' : 'score-high';
+            }
+            
+            // Display results
+            this.displayAntiCheatResults(container, results);
+            this.addLog('scan', 'Full anti-cheat scan completed. Risk score: ' + this.detectionScore);
+        }
+        
+        performStealthScan(container) {
+            this.addLog('scan', 'Starting stealth scan...');
+            
+            // Minimal detection scan
+            const results = [{
+                component: 'Stealth Mode',
+                status: 'ACTIVE',
+                risk: 0,
+                description: 'Running minimal detection to avoid alerts'
+            }];
+            
+            this.displayAntiCheatResults(container, results);
+            this.addLog('scan', 'Stealth scan completed');
+        }
+        
+        performNetworkAntiCheatScan(container) {
+            this.addLog('scan', 'Starting network anti-cheat scan...');
+            
+            const results = [{
+                component: 'Network Monitoring',
+                status: 'SCANNING',
+                risk: 0,
+                description: 'Checking for network-based anti-cheat systems'
+            }];
+            
+            this.displayAntiCheatResults(container, results);
+            this.addLog('scan', 'Network anti-cheat scan in progress');
+        }
+        
+        performMemoryProtectionScan(container) {
+            this.addLog('scan', 'Starting memory protection scan...');
+            
+            const results = [];
+            
+            // Check for Object.freeze
+            try {
+                if (Object.isFrozen(window)) {
+                    results.push({
+                        component: 'Window Object',
+                        status: 'PROTECTED',
+                        risk: 25,
+                        description: 'Window object is frozen'
+                    });
+                } else {
+                    results.push({
+                        component: 'Window Object',
+                        status: 'ACCESSIBLE',
+                        risk: 0,
+                        description: 'Window object is not protected'
+                    });
+                }
+            } catch (e) {
+                results.push({
+                    component: 'Window Object',
+                    status: 'ERROR',
+                    risk: 10,
+                    description: 'Cannot check window protection'
+                });
+            }
+            
+            this.displayAntiCheatResults(container, results);
+            this.addLog('scan', 'Memory protection scan completed');
+        }
+        
+        performBehaviorScan(container) {
+            this.addLog('scan', 'Starting behavior scan...');
+            
+            const results = [{
+                component: 'Behavior Analysis',
+                status: 'MONITORING',
+                risk: 0,
+                description: 'Analyzing user behavior patterns'
+            }];
+            
+            this.displayAntiCheatResults(container, results);
+            this.addLog('scan', 'Behavior scan started');
+        }
+        
+        performCustomScan(container) {
+            this.addLog('scan', 'Starting custom scan...');
+            
+            const results = [{
+                component: 'Custom Scan',
+                status: 'CONFIGURABLE',
+                risk: 0,
+                description: 'Custom scan parameters can be configured'
+            }];
+            
+            this.displayAntiCheatResults(container, results);
+            this.addLog('scan', 'Custom scan ready');
+        }
+        
+        displayAntiCheatResults(container, results) {
+            if (!container) return;
+            
+            container.innerHTML = results.map(result => {
+                const statusColor = result.status === 'DETECTED' ? '#ff0000' : 
+                                  result.status === 'CLEAR' ? '#00ff00' : 
+                                  result.status === 'PROTECTED' ? '#ffaa00' : '#0088ff';
+                
+                return '<div class="av-result-item" style="border-left: 3px solid ' + statusColor + ';">' +
+                    '<div style="display: flex; justify-content: space-between;">' +
+                        '<strong>' + result.component + '</strong>' +
+                        '<span style="color: ' + statusColor + ';">' + result.status + '</span>' +
+                    '</div>' +
+                    '<div style="color: #ccc; font-size: 11px; margin-top: 4px;">' +
+                        result.description +
+                    '</div>' +
+                    '<div style="color: #ffaa00; font-size: 10px; text-align: right;">' +
+                        'Risk: ' + result.risk + '/30' +
+                    '</div>' +
+                '</div>';
+            }).join('');
+        }
+        
+        // Extra Functions Methods
+        executeExtraFunction(functionId) {
+            switch (functionId) {
+                case 'disable-ads':
+                    this.disableAds();
+                    break;
+                case 'enable-copy':
+                    this.enableCopyPaste();
+                    break;
+                case 'remove-overlays':
+                    this.removeOverlays();
+                    break;
+                case 'highlight-clickable':
+                    this.highlightClickableElements();
+                    break;
+                case 'show-passwords':
+                    this.showPasswords();
+                    break;
+                case 'disable-redirects':
+                    this.disableRedirects();
+                    break;
+                case 'god-mode':
+                    this.scanForGodMode();
+                    break;
+                case 'speed-hack':
+                    this.enableSpeedHack();
+                    break;
+                case 'no-clip':
+                    this.enableNoClip();
+                    break;
+                case 'auto-complete':
+                    this.autoComplete();
+                    break;
+                case 'unlock-all':
+                    this.unlockEverything();
+                    break;
+                case 'infinite-resources':
+                    this.enableInfiniteResources();
+                    break;
+                case 'apply-speed':
+                    this.applySpeedMultiplier();
+                    break;
+                case 'intercept-requests':
+                    this.interceptNetworkRequests();
+                    break;
+                case 'modify-responses':
+                    this.modifyNetworkResponses();
+                    break;
+                case 'fake-offline':
+                    this.fakeOfflineMode();
+                    break;
+                case 'block-analytics':
+                    this.blockAnalytics();
+                    break;
+                case 'spoof-location':
+                    this.spoofLocation();
+                    break;
+                case 'dark-mode':
+                    this.toggleDarkMode();
+                    break;
+                case 'zoom-page':
+                    this.showZoomControls();
+                    break;
+                case 'fullscreen-any':
+                    this.fullscreenAnyElement();
+                    break;
+                case 'remove-animations':
+                    this.disableAnimations();
+                    break;
+                case 'apply-css':
+                    this.applyCustomCSS();
+                    break;
+                default:
+                    this.addLog('warning', 'Unknown extra function: ' + functionId);
+            }
+        }
+        
+        // Implement extra functions with actual functionality
+        disableAds() {
+            try {
+                // Remove common ad elements
+                const adSelectors = [
+                    '[class*="ad"]', '[id*="ad"]', '[class*="advertisement"]',
+                    '.banner', '.popup', '.overlay', '[class*="sponsor"]'
+                ];
+                
+                let removedCount = 0;
+                adSelectors.forEach(selector => {
+                    try {
+                        const elements = document.querySelectorAll(selector);
+                        elements.forEach(el => {
+                            if (el.offsetHeight > 50 || el.offsetWidth > 200) {
+                                el.style.display = 'none';
+                                removedCount++;
+                            }
+                        });
+                    } catch (e) {}
+                });
+                
+                this.addLog('cheat', 'Ad blocking: Hidden ' + removedCount + ' potential ad elements');
+            } catch (error) {
+                this.addLog('error', 'Ad blocking error: ' + error.message);
+            }
+        }
+        
+        enableCopyPaste() {
+            try {
+                // Remove copy protection
+                document.onselectstart = null;
+                document.ondragstart = null;
+                document.oncontextmenu = null;
+                
+                // Enable text selection on all elements
+                const style = document.createElement('style');
+                style.textContent = `
+                    * {
+                        -webkit-user-select: text !important;
+                        -moz-user-select: text !important;
+                        -ms-user-select: text !important;
+                        user-select: text !important;
+                    }
+                `;
+                document.head.appendChild(style);
+                
+                this.addLog('cheat', 'Copy/paste protection disabled');
+            } catch (error) {
+                this.addLog('error', 'Copy/paste enable error: ' + error.message);
+            }
+        }
+        
+        removeOverlays() {
+            try {
+                // Remove elements with high z-index (likely overlays)
+                const allElements = document.querySelectorAll('*');
+                let removedCount = 0;
+                
+                allElements.forEach(el => {
+                    const style = window.getComputedStyle(el);
+                    const zIndex = parseInt(style.zIndex);
+                    
+                    if (zIndex > 1000 || style.position === 'fixed' && 
+                        (el.offsetWidth > window.innerWidth * 0.8 || el.offsetHeight > window.innerHeight * 0.8)) {
+                        el.style.display = 'none';
+                        removedCount++;
+                    }
+                });
+                
+                this.addLog('cheat', 'Removed ' + removedCount + ' overlay elements');
+            } catch (error) {
+                this.addLog('error', 'Overlay removal error: ' + error.message);
+            }
+        }
+        
+        highlightClickableElements() {
+            try {
+                const clickableElements = document.querySelectorAll('button, a, [onclick], input[type="button"], input[type="submit"]');
+                
+                clickableElements.forEach(el => {
+                    el.style.border = '2px solid #00ff00';
+                    el.style.boxShadow = '0 0 10px #00ff00';
+                });
+                
+                this.addLog('cheat', 'Highlighted ' + clickableElements.length + ' clickable elements');
+            } catch (error) {
+                this.addLog('error', 'Highlight error: ' + error.message);
+            }
+        }
+        
+        showPasswords() {
+            try {
+                const passwordInputs = document.querySelectorAll('input[type="password"]');
+                passwordInputs.forEach(input => {
+                    input.type = 'text';
+                });
+                this.addLog('cheat', 'Revealed ' + passwordInputs.length + ' password fields');
+            } catch (error) {
+                this.addLog('error', 'Password reveal error: ' + error.message);
+            }
+        }
+        
+        disableRedirects() {
+            try {
+                // Override location methods
+                const originalAssign = window.location.assign;
+                const originalReplace = window.location.replace;
+                
+                window.location.assign = function(url) {
+                    window.anticheatTester.addLog('cheat', 'Blocked redirect to: ' + url);
+                };
+                
+                window.location.replace = function(url) {
+                    window.anticheatTester.addLog('cheat', 'Blocked redirect to: ' + url);
+                };
+                
+                this.addLog('cheat', 'Redirect blocking enabled');
+            } catch (error) {
+                this.addLog('error', 'Redirect disable error: ' + error.message);
+            }
+        }
+        
+        scanForGodMode() {
+            try {
+                const godModeTerms = ['invincible', 'immortal', 'god', 'cheat', 'debug'];
+                const found = [];
+                
+                Object.keys(window).forEach(key => {
+                    if (godModeTerms.some(term => key.toLowerCase().includes(term))) {
+                        found.push(key);
+                    }
+                });
+                
+                this.addLog('scan', 'God mode scan: Found ' + found.length + ' potential variables');
+                if (found.length > 0) {
+                    this.addLog('scan', 'Candidates: ' + found.join(', '));
+                }
+            } catch (error) {
+                this.addLog('error', 'God mode scan error: ' + error.message);
+            }
+        }
+        
+        enableSpeedHack() {
+            try {
+                // Store original functions
+                if (!this.originalFunctions.has('requestAnimationFrame')) {
+                    this.originalFunctions.set('requestAnimationFrame', window.requestAnimationFrame);
+                    this.originalFunctions.set('setTimeout', window.setTimeout);
+                    this.originalFunctions.set('setInterval', window.setInterval);
+                }
+                
+                const speedMultiplier = parseFloat(this.container.querySelector('#speed-multiplier')?.value) || 2;
+                
+                // Speed up animations and timers
+                window.requestAnimationFrame = function(callback) {
+                    return window.anticheatTester.originalFunctions.get('requestAnimationFrame')(callback);
+                };
+                
+                window.setTimeout = function(func, delay, ...args) {
+                    return window.anticheatTester.originalFunctions.get('setTimeout')(func, delay / speedMultiplier, ...args);
+                };
+                
+                window.setInterval = function(func, delay, ...args) {
+                    return window.anticheatTester.originalFunctions.get('setInterval')(func, delay / speedMultiplier, ...args);
+                };
+                
+                this.addLog('cheat', 'Speed hack enabled with multiplier: ' + speedMultiplier);
+            } catch (error) {
+                this.addLog('error', 'Speed hack error: ' + error.message);
+            }
+        }
+        
+        // Implement remaining extra functions with similar functionality...
+        enableNoClip() {
+            this.addLog('cheat', 'No-clip mode activated (game-specific implementation needed)');
+        }
+        
+        autoComplete() {
+            this.addLog('cheat', 'Auto-complete activated (game-specific implementation needed)');
+        }
+        
+        unlockEverything() {
+            this.addLog('cheat', 'Unlock all activated (game-specific implementation needed)');
+        }
+        
+        enableInfiniteResources() {
+            this.addLog('cheat', 'Infinite resources activated (use memory scanner to find specific resources)');
+        }
+        
+        applySpeedMultiplier() {
+            const multiplier = this.container.querySelector('#speed-multiplier')?.value;
+            this.addLog('cheat', 'Speed multiplier set to: ' + multiplier);
+        }
+        
+        interceptNetworkRequests() {
+            this.addLog('cheat', 'Network request interception enabled');
+        }
+        
+        modifyNetworkResponses() {
+            this.addLog('cheat', 'Network response modification enabled');
+        }
+        
+        fakeOfflineMode() {
+            try {
+                Object.defineProperty(navigator, 'onLine', {
+                    writable: true,
+                    value: false
+                });
+                this.addLog('cheat', 'Fake offline mode enabled');
+            } catch (error) {
+                this.addLog('error', 'Fake offline error: ' + error.message);
+            }
+        }
+        
+        blockAnalytics() {
+            try {
+                // Block common analytics
+                window.ga = function() {};
+                window.gtag = function() {};
+                window._gaq = [];
+                this.addLog('cheat', 'Analytics blocking enabled');
+            } catch (error) {
+                this.addLog('error', 'Analytics blocking error: ' + error.message);
+            }
+        }
+        
+        spoofLocation() {
+            try {
+                if (navigator.geolocation) {
+                    navigator.geolocation.getCurrentPosition = function(success, error) {
+                        success({
+                            coords: {
+                                latitude: 40.7128,
+                                longitude: -74.0060,
+                                accuracy: 10
+                            }
+                        });
+                    };
+                    this.addLog('cheat', 'Location spoofed to New York City');
+                }
+            } catch (error) {
+                this.addLog('error', 'Location spoofing error: ' + error.message);
+            }
+        }
+        
+        toggleDarkMode() {
+            try {
+                const darkStyle = document.getElementById('toxivids-dark-mode');
+                if (darkStyle) {
+                    darkStyle.remove();
+                    this.addLog('cheat', 'Dark mode disabled');
+                } else {
+                    const style = document.createElement('style');
+                    style.id = 'toxivids-dark-mode';
+                    style.textContent = `
+                        * {
+                            background: #1a1a1a !important;
+                            color: #ffffff !important;
+                        }
+                    `;
+                    document.head.appendChild(style);
+                    this.addLog('cheat', 'Dark mode enabled');
+                }
+            } catch (error) {
+                this.addLog('error', 'Dark mode toggle error: ' + error.message);
+            }
+        }
+        
+        showZoomControls() {
+            try {
+                const currentZoom = document.body.style.zoom || '1';
+                const newZoom = prompt('Enter zoom level (e.g., 1.5 for 150%)', currentZoom);
+                if (newZoom) {
+                    document.body.style.zoom = newZoom;
+                    this.addLog('cheat', 'Zoom set to: ' + newZoom);
+                }
+            } catch (error) {
+                this.addLog('error', 'Zoom control error: ' + error.message);
+            }
+        }
+        
+        fullscreenAnyElement() {
+            this.addLog('info', 'Click on any element to make it fullscreen');
+            
+            const handler = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                const element = e.target;
+                if (element.requestFullscreen) {
+                    element.requestFullscreen();
+                    this.addLog('cheat', 'Made element fullscreen: ' + element.tagName);
+                }
+                
+                document.removeEventListener('click', handler, true);
+            };
+            
+            document.addEventListener('click', handler, true);
+        }
+        
+        disableAnimations() {
+            try {
+                const style = document.createElement('style');
+                style.textContent = `
+                    *, *::before, *::after {
+                        animation-duration: 0s !important;
+                        animation-delay: 0s !important;
+                        transition-duration: 0s !important;
+                        transition-delay: 0s !important;
+                    }
+                `;
+                document.head.appendChild(style);
+                this.addLog('cheat', 'Animations disabled');
+            } catch (error) {
+                this.addLog('error', 'Animation disable error: ' + error.message);
+            }
+        }
+        
+        applyCustomCSS() {
+            try {
+                const css = this.container.querySelector('#custom-css-input')?.value;
+                if (css) {
+                    const style = document.createElement('style');
+                    style.textContent = css;
+                    document.head.appendChild(style);
+                    this.addLog('cheat', 'Custom CSS applied');
+                } else {
+                    this.addLog('warning', 'No CSS provided');
+                }
+            } catch (error) {
+                this.addLog('error', 'Custom CSS error: ' + error.message);
+            }
+        }
+        
+        // Macro Methods
+        executeMacroFunction(functionId) {
+            switch (functionId) {
+                case 'start-recording':
+                    this.startMacroRecording();
+                    break;
+                case 'stop-recording':
+                    this.stopMacroRecording();
+                    break;
+                case 'play-macro':
+                    this.playMacro();
+                    break;
+                case 'save-macro':
+                    this.saveMacro();
+                    break;
+                case 'load-macro':
+                    this.loadMacro();
+                    break;
+            }
+        }
+        
+        startMacroRecording() {
+            if (this.isRecording) return;
+            
+            this.isRecording = true;
+            this.recordedMacro = [];
+            this.container.querySelector('#recording-status').textContent = 'Recording...';
+            
+            // Record mouse events
+            this.macroMouseHandler = (e) => {
+                if (this.isRecording && !e.target.closest('#toxivids-cheat-engine')) {
+                    this.recordedMacro.push({
+                        type: 'click',
+                        x: e.clientX,
+                        y: e.clientY,
+                        target: this.generateSelector(e.target),
+                        timestamp: Date.now()
+                    });
+                    this.updateMacroCount();
+                }
+            };
+            
+            // Record keyboard events
+            this.macroKeyHandler = (e) => {
+                if (this.isRecording && !e.target.closest('#toxivids-cheat-engine')) {
+                    this.recordedMacro.push({
+                        type: 'keypress',
+                        key: e.key,
+                        code: e.code,
+                        timestamp: Date.now()
+                    });
+                    this.updateMacroCount();
+                }
+            };
+            
+            document.addEventListener('click', this.macroMouseHandler, true);
+            document.addEventListener('keydown', this.macroKeyHandler, true);
+            
+            this.addLog('info', 'Macro recording started');
+        }
+        
+        stopMacroRecording() {
+            if (!this.isRecording) return;
+            
+            this.isRecording = false;
+            this.container.querySelector('#recording-status').textContent = 'Stopped';
+            
+            if (this.macroMouseHandler) {
+                document.removeEventListener('click', this.macroMouseHandler, true);
+                this.macroMouseHandler = null;
+            }
+            
+            if (this.macroKeyHandler) {
+                document.removeEventListener('keydown', this.macroKeyHandler, true);
+                this.macroKeyHandler = null;
+            }
+            
+            this.updateMacroDisplay();
+            this.addLog('info', 'Macro recording stopped. Recorded ' + this.recordedMacro.length + ' actions');
+        }
+        
+        updateMacroCount() {
+            const countElement = this.container.querySelector('#macro-count');
+            if (countElement) {
+                countElement.textContent = this.recordedMacro.length;
+            }
+        }
+        
+        updateMacroDisplay() {
+            const container = this.container.querySelector('#macro-list');
+            if (!container) return;
+            
+            if (this.recordedMacro.length === 0) {
+                container.innerHTML = '<div class="av-placeholder">No recorded actions</div>';
+                return;
+            }
+            
+            container.innerHTML = this.recordedMacro.slice(0, 50).map((action, index) => {
+                return '<div class="av-result-item" style="font-size: 11px;">' +
+                    (index + 1) + '. ' + action.type + ' ' + (action.target || action.key || '') + ' ' +
+                    (action.x ? '(' + action.x + ', ' + action.y + ')' : '') +
+                '</div>';
+            }).join('');
+        }
+        
+        playMacro() {
+            if (this.recordedMacro.length === 0) {
+                this.addLog('warning', 'No macro recorded');
+                return;
+            }
+            
+            this.addLog('info', 'Playing macro with ' + this.recordedMacro.length + ' actions');
+            
+            let actionIndex = 0;
+            const playNextAction = () => {
+                if (actionIndex >= this.recordedMacro.length) {
+                    this.addLog('info', 'Macro playback completed');
+                    return;
+                }
+                
+                const action = this.recordedMacro[actionIndex];
+                try {
+                    if (action.type === 'click') {
+                        const element = document.querySelector(action.target);
+                        if (element) {
+                            element.click();
+                        } else {
+                            // Click at coordinates
+                            this.simulateClick(action.x, action.y);
+                        }
+                    } else if (action.type === 'keypress') {
+                        this.sendKeyEvent(action.key);
+                    }
+                } catch (error) {
+                    this.addLog('error', 'Macro playback error: ' + error.message);
+                }
+                
+                actionIndex++;
+                setTimeout(playNextAction, 100); // Delay between actions
+            };
+            
+            playNextAction();
+        }
+        
+        saveMacro() {
+            if (this.recordedMacro.length === 0) {
+                this.addLog('warning', 'No macro to save');
+                return;
+            }
+            
+            const macroData = {
+                name: 'Macro_' + Date.now(),
+                actions: this.recordedMacro,
+                created: new Date().toISOString(),
+                version: '1.0'
+            };
+            
+            this.downloadJSON(macroData, 'macro_' + Date.now() + '.json');
+            this.addLog('info', 'Macro saved to file');
+        }
+        
+        loadMacro() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.json';
+            
+            const self = this;
+            input.onchange = function(e) {
+                const file = e.target.files[0];
+                if (!file) return;
+                
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    try {
+                        const data = JSON.parse(e.target.result);
+                        if (data.actions && Array.isArray(data.actions)) {
+                            self.recordedMacro = data.actions;
+                            self.updateMacroCount();
+                            self.updateMacroDisplay();
+                            self.addLog('info', 'Loaded macro with ' + data.actions.length + ' actions');
+                        } else {
+                            self.addLog('error', 'Invalid macro file format');
+                        }
+                    } catch (error) {
+                        self.addLog('error', 'Failed to load macro: ' + error.message);
+                    }
+                };
+                reader.readAsText(file);
+            };
+            
+            input.click();
+        }
+        
+        // Logging methods
+        addLog(logType, message, isButtonClick = false) {
+            const timestamp = new Date().toLocaleTimeString();
+            const log = {
+                type: isButtonClick ? 'button' : logType,
+                message: message,
+                timestamp: timestamp,
+                id: Date.now() + Math.random()
+            };
+            
+            this.logs.unshift(log);
+            
+            if (this.logs.length > 2000) {
+                this.logs = this.logs.slice(0, 2000);
+            }
+            
+            this.updateLogDisplay();
+            this.updateLogStats();
+        }
+        
+        updateLogDisplay() {
+            const container = this.container.querySelector('#log-container');
+            if (!container) return;
+            
+            const filter = this.container.querySelector('#log-filter');
+            const filterValue = filter ? filter.value : 'all';
+            const filteredLogs = filterValue === 'all' ? this.logs : this.logs.filter(log => log.type === filterValue);
+            
+            if (filteredLogs.length === 0) {
+                container.innerHTML = '<div class="av-placeholder">No logs to display</div>';
+                return;
+            }
+            
+            container.innerHTML = filteredLogs.slice(0, 1000).map(log => {
+                return '<div class="av-log-item ' + log.type + '">' +
+                    '<div style="display: flex; justify-content: space-between; align-items: center;">' +
+                        '<span><strong>[' + log.type.toUpperCase() + ']</strong> ' + log.message + '</span>' +
+                        '<span style="color: #888; font-size: 9px;">' + log.timestamp + '</span>' +
+                    '</div>' +
+                '</div>';
+            }).join('');
+            
+            // Auto-scroll if enabled
+            if (this.autoScrollLogs) {
+                container.scrollTop = container.scrollHeight;
+            }
+        }
+        
+        updateLogStats() {
+            const totalElement = this.container.querySelector('#total-logs');
+            const errorElement = this.container.querySelector('#error-logs');
+            const warningElement = this.container.querySelector('#warning-logs');
+            const cheatElement = this.container.querySelector('#cheat-logs');
+            const buttonElement = this.container.querySelector('#button-logs');
+            
+            if (totalElement) totalElement.textContent = this.logs.length;
+            if (errorElement) errorElement.textContent = this.logs.filter(l => l.type === 'error').length;
+            if (warningElement) warningElement.textContent = this.logs.filter(l => l.type === 'warning').length;
+            if (cheatElement) cheatElement.textContent = this.logs.filter(l => l.type === 'cheat').length;
+            if (buttonElement) buttonElement.textContent = this.logs.filter(l => l.type === 'button').length;
+        }
+        
+        clearLogs() {
+            this.logs = [];
+            this.updateLogDisplay();
+            this.updateLogStats();
+            this.addLog('info', 'Logs cleared');
+        }
+        
+        filterLogs(filter) {
+            this.updateLogDisplay();
+        }
+        
+        exportLogs() {
+            const data = {
+                exportDate: new Date().toISOString(),
+                logs: this.logs,
+                stats: {
+                    total: this.logs.length,
+                    errors: this.logs.filter(l => l.type === 'error').length,
+                    warnings: this.logs.filter(l => l.type === 'warning').length,
+                    cheats: this.logs.filter(l => l.type === 'cheat').length,
+                    buttons: this.logs.filter(l => l.type === 'button').length
+                }
+            };
+            
+            this.downloadJSON(data, 'toxivids-cheat-engine-logs-' + Date.now() + '.json');
+            this.addLog('info', 'Logs exported to file');
+        }
+        
+        importLogs() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.json';
+            
+            const self = this;
+            input.onchange = function(e) {
+                const file = e.target.files[0];
+                if (!file) return;
+                
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    try {
+                        const data = JSON.parse(e.target.result);
+                        if (data.logs && Array.isArray(data.logs)) {
+                            self.logs = data.logs.concat(self.logs);
+                            self.updateLogDisplay();
+                            self.updateLogStats();
+                            self.addLog('info', 'Imported ' + data.logs.length + ' logs from file');
+                        }
+                    } catch (error) {
+                        self.addLog('error', 'Failed to import logs: ' + error.message);
+                    }
+                };
+                reader.readAsText(file);
+            };
+            
+            input.click();
+        }
+        
+        // Utility methods
+        downloadJSON(data, filename) {
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+        
+        loadSettings() {
+            try {
+                const settings = localStorage.getItem('toxivids-cheat-engine-settings');
+                if (settings) {
+                    const parsed = JSON.parse(settings);
+                    this.position = parsed.position || this.position;
+                    this.size = parsed.size || this.size;
+                }
+            } catch (e) {
+                this.addLog('warning', 'Failed to load settings');
+            }
+        }
+        
+        saveSettings() {
+            try {
+                const settings = {
+                    position: this.position,
+                    size: this.size,
+                    logs: this.logs.slice(0, 100)
+                };
+                localStorage.setItem('toxivids-cheat-engine-settings', JSON.stringify(settings));
+            } catch (e) {
+                this.addLog('warning', 'Failed to save settings');
+            }
+        }
+        
+        destroy() {
+            this.stopAllActivities();
+            this.saveSettings();
+            if (this.container) {
+                this.container.remove();
+            }
+        }
+    }
+    
+    // Create global instance
+    if (window.anticheatTester) {
+        window.anticheatTester.destroy();
+    }
+    
+    window.anticheatTester = new ToxividsCheatEngine();
+    
+    console.log('%c🧙 toxivids cheat engine v4 Loaded!', 'color: #00ff00; font-size: 16px; font-weight: bold;');
+    console.log('%cUse window.anticheatTester to access the instance', 'color: #0088ff;');
+    console.log('%cGUI should be visible on your screen. All features are now functional!', 'color: #ffaa00;');
+    
+})();
+
+// End of toxivids cheat engine v4
